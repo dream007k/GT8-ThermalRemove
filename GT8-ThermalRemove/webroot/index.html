@@ -179,6 +179,20 @@
     </ul>
   </section>
 
+  <!-- ══ 温频曲线（v2.16.0 F5）════════════════════════════════════
+       每维护周期（120s）service 采一轮 SoC 真实温度 + cpu0/cpu6/GPU 频率，
+       画成曲线量化「去温控有没有效果」：温度是否被压住、频率是否掉。 -->
+  <p class="sec-title">温频曲线 <small id="hist-hint"></small></p>
+  <section class="card" id="hist-card">
+    <div class="btnrow">
+      <button id="btn-hist-load">加载温频曲线</button>
+      <button id="btn-hist-auto" class="ghost">自动刷新</button>
+    </div>
+    <svg id="hist-svg" viewBox="0 0 680 260" preserveAspectRatio="none"></svg>
+    <p class="zlegend" id="hist-legend" style="display:none"></p>
+    <p class="tstate" id="hist-state">数据积累中：service 每 120 秒采一个点，约 2 分钟后可看趋势</p>
+  </section>
+
   <!-- ══ 进阶选项 ══ -->
   <p class="sec-title">进阶选项</p>
   <section class="card">
@@ -1303,6 +1317,73 @@ setInterval(function(){
   }, { passive: true });
 })();
 
+/* ════════════════ 温频曲线（v2.16.0 F5） ════════════════ */
+var HIST_AUTO = false, HIST_TIMER = null;
+function apiHistory() {
+  if (HAS_KSU) return execJson('--history');
+  return cgiJson('action=history');
+}
+function renderHistory(d) {
+  var svg = $('hist-svg'), st = $('hist-state'), lg = $('hist-legend');
+  if (!svg || !st) return;
+  var items = (d && d.items) ? d.items : [];
+  if (items.length < 2) {
+    st.textContent = '数据不足（需至少 2 个采样点，约 2 分钟）——保持 service 运行会自动积累';
+    svg.style.display = 'none'; svg.innerHTML = '';
+    if (lg) lg.style.display = 'none';
+    return;
+  }
+  var W = 680, H = 260, padL = 42, padR = 48, padT = 12, padB = 26;
+  var iw = W - padL - padR, ih = H - padT - padB;
+  var t0 = 20, t1 = 100, f0 = 0, f1 = 4400;
+  function tx(i){ return padL + iw * (i / (items.length - 1)); }
+  function tyC(v){ var c = (v - t0) / (t1 - t0); if (c < 0) c = 0; if (c > 1) c = 1; return padT + ih * (1 - c); }
+  function tyF(v){ var c = (v - f0) / (f1 - f0); if (c < 0) c = 0; if (c > 1) c = 1; return padT + ih * (1 - c); }
+  function line(getVal, getY, color) {
+    var pts = [];
+    for (var i = 0; i < items.length; i++) {
+      var v = getVal(items[i]);
+      if (v == null || !isFinite(v) || v <= 0) continue;
+      pts.push(tx(i).toFixed(1) + ',' + getY(v).toFixed(1));
+    }
+    if (pts.length < 2) return '';
+    return '<polyline fill="none" stroke="' + color + '" stroke-width="1.6" points="' + pts.join(' ') + '"/>';
+  }
+  var html = '';
+  // GPU 1.1GHz 上限参考线（外部 adreno 驱动压频线）
+  html += '<line x1="' + padL + '" y1="' + tyF(1100).toFixed(1) + '" x2="' + (W - padR) + '" y2="' + tyF(1100).toFixed(1) +
+          '" stroke="rgba(127,127,127,0.35)" stroke-dasharray="3 3"/>';
+  html += line(function(a){ return a[1] / 1000; }, tyC, '#e5484d');      // SoC 温度（°C）
+  html += line(function(a){ return a[2] / 1000; }, tyF, '#f5a623');      // 小核（MHz）
+  html += line(function(a){ return a[3] / 1000; }, tyF, '#3b9eff');      // 大核（MHz）
+  html += line(function(a){ return a[4] / 1000000; }, tyF, '#34c77b');   // GPU（MHz）
+  svg.innerHTML = html;
+  svg.style.display = '';
+  st.textContent = '共 ' + items.length + ' 个采样点（每 120s 一个；虚线 = GPU 1.1GHz 外部压频线）';
+  if (lg) { lg.style.display = ''; lg.innerHTML =
+    '<b style="color:#e5484d">— SoC温度(°C)</b>　' +
+    '<b style="color:#f5a623">— 小核</b>　' +
+    '<b style="color:#3b9eff">— 大核</b>　' +
+    '<b style="color:#34c77b">— GPU</b>（频率 MHz）'; }
+}
+function loadHistory() {
+  var st = $('hist-state'); if (st) st.textContent = '读取中…';
+  apiHistory().then(renderHistory).catch(function(){ if (st) st.textContent = '读取失败'; });
+}
+function toggleHistAuto() {
+  var b = $('btn-hist-auto');
+  if (HIST_AUTO) {
+    HIST_AUTO = false;
+    if (HIST_TIMER) { clearInterval(HIST_TIMER); HIST_TIMER = null; }
+    if (b) b.textContent = '自动刷新';
+  } else {
+    HIST_AUTO = true;
+    if (b) b.textContent = '自动刷新中（120s）';
+    loadHistory();
+    HIST_TIMER = setInterval(loadHistory, 120000);
+  }
+}
+
 /* ════════════════ 启动 ════════════════ */
 $('btn-save').onclick = save;
 /* 顶部「刷新」= 刷状态 + 顺带读取一次真实温度（属于用户主动操作） */
@@ -1319,6 +1400,9 @@ $('btn-real').onclick = function(){ refreshReal(true); };
 /* v2.11.0：场景预设 + 温感树 */
 $('btn-tree-load').onclick = loadTree;
 $('btn-tree-fold').onclick = foldAllTree;
+/* v2.16.0 F5：温频曲线 */
+$('btn-hist-load').onclick = loadHistory;
+$('btn-hist-auto').onclick = toggleHistAuto;
 bindPresets();
 bindTree();
 /* 真实温度开关：写入配置；勾选上时按用户意图读一次，取消勾选只重绘不请求 */

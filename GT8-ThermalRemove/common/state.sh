@@ -202,6 +202,37 @@ maintain_state() {
     mount_config_overlays
     # v2.12.0：温度保险丝挂在维护周期里（低频、只在欺骗生效时才有意义）
     [ "$FUSE_ENABLE" = "1" ] && fuse_tick
+    # v2.16.0 F5：温频历史快照（真实温度 + CPU/GPU 频率），供 WebUI 曲线
+    history_snapshot
+    return 0
+}
+
+# ── v2.16.0 F5：温频历史快照 ─────────────────────────────────
+# 每维护周期采一轮：SoC 真实温度（_fuse_read_one，原值恢复）+ cpu0/cpu6/GPU 当前频率，
+# 追加到 HISTORY_LIST（滚动 120 条 ≈ 4 小时）。除采 SoC 真值的一次 emul_temp 写外，
+# 频率全是纯读；供 WebUI「温频曲线」量化「去温控有没有效果」。
+history_snapshot() {
+    # 找 SoC 温感（复用保险丝匹配规则，排除黑名单）
+    _hs_z=""
+    for _hz in /sys/class/thermal/thermal_zone*; do
+        [ -e "$_hz/emul_temp" ] && [ -e "$_hz/temp" ] || continue
+        _hty=""; read -r _hty < "$_hz/type" 2>/dev/null
+        [ -n "$_hty" ] || continue
+        is_blacklisted "$_hty" && continue
+        case "$_hty" in *soc*|*cpu-0-*|*ap*) _hs_z="$_hz"; break ;; esac
+    done
+    _hs_soc=""
+    [ -n "$_hs_z" ] && _fuse_read_one "$_hs_z" && _hs_soc="$_FR_VAL"
+    # 频率（纯读；cpu6 / GPU 跨机型兜底）
+    _hs_c0=""; read -r _hs_c0 < /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq 2>/dev/null
+    _hs_c6=""; read -r _hs_c6 < /sys/devices/system/cpu/cpu6/cpufreq/scaling_cur_freq 2>/dev/null
+    _hs_gpu=""
+    read -r _hs_gpu < /sys/class/kgsl/kgsl-3d0/devfreq/cur_freq 2>/dev/null
+    [ -z "$_hs_gpu" ] && read -r _hs_gpu < /sys/class/devfreq/3d00000.qcom,kgsl-3d0/cur_freq 2>/dev/null
+    # 追加 + 滚动（tail/mv 每周期各一次 fork，文件 <120 行时开销可忽略）
+    echo "$(date +%s) ${_hs_soc:-0} ${_hs_c0:-0} ${_hs_c6:-0} ${_hs_gpu:-0}" >> "$HISTORY_LIST" 2>/dev/null
+    tail -n 120 "$HISTORY_LIST" > "$HISTORY_LIST.tmp" 2>/dev/null && \
+        mv -f "$HISTORY_LIST.tmp" "$HISTORY_LIST" 2>/dev/null
     return 0
 }
 

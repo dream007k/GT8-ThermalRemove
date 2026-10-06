@@ -220,6 +220,10 @@ details[open] summary::before{content:'▾ ';}
 }
 .tstate em.e{font-style:normal;color:var(--hot)}
 .tstate a{color:var(--accent);text-decoration:none;font-weight:650}
+#hist-svg{
+  display:block;width:100%;height:auto;margin-top:10px;
+  background:var(--bg);border:1px solid var(--line);border-radius:10px;
+}
 .spin{
   flex:0 0 auto;width:12px;height:12px;border-radius:50%;
   border:2px solid #cfd8e6;border-top-color:var(--accent);

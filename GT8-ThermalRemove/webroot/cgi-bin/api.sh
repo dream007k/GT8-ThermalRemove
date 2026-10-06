@@ -36,6 +36,8 @@ REAL_ZERO_MARK="${REAL_ZERO_MARK:-/data/adb/thermal_remove/.real_zeroed}"
 # v2.12.0：温度保险丝的触发记录与安全模式标记（只读展示，可注入便于测试）
 FUSE_LOG="${FUSE_LOG:-/data/adb/thermal_remove/fuse.log}"
 SAFE_MODE_MARK="${SAFE_MODE_MARK:-/data/adb/thermal_remove/.safe_mode}"
+# v2.16.0 F5：温频历史快照（service 维护周期写，WebUI 曲线读，可注入便于测试）
+HISTORY_LIST="${HISTORY_LIST:-/data/adb/thermal_remove/history.list}"
 # v2.13.2（A2）：配置键唯一事实源（零副作用，可安全 source）
 . "$MODDIR/common/schema.sh" 2>/dev/null
 # 欺骗记账：apply_spoof 写成功的温感清单（dir|value 每行一条）。
@@ -555,6 +557,19 @@ get_log_full() {
     echo "{\"success\":true,\"log\":\"$_rows\"}"
 }
 
+# v2.16.0 F5：温频历史快照（每行 epoch soc cpu0 cpu6 gpu，全整数无需转义）
+get_history() {
+    _rows=""
+    _first=1
+    while read -r _h_e _h_s _h_c0 _h_c6 _h_g; do
+        [ -n "$_h_e" ] || continue
+        case "$_h_e" in ''|*[!0-9]*) continue ;; esac
+        [ "$_first" = "1" ] && _first=0 || _rows="$_rows,"
+        _rows="$_rows[$_h_e,$_h_s,$_h_c0,$_h_c6,$_h_g]"
+    done < "$HISTORY_LIST" 2>/dev/null
+    echo "{\"success\":true,\"items\":[$_rows]}"
+}
+
 # v2.8.13：把日志复制到 /sdcard/Download（root 权限，浏览器下载目录不可控时的
 # 确定性落盘位置）。文件名带时间戳，避免覆盖。失败时返回明确错误，前端据此降级。
 get_save2download() {
@@ -814,6 +829,7 @@ case "$1" in
     --temps)  get_temps "$2" "$3"; exit 0 ;;
     --set)    do_set "$@"; exit 0 ;;
     --log)    get_log;    exit 0 ;;
+    --history) get_history; exit 0 ;;
     --exportlog) get_log_full; exit 0 ;;
     --save2download) get_save2download; exit 0 ;;
     --diagpack) get_diagpack; exit 0 ;;

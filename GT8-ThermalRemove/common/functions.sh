@@ -64,6 +64,9 @@ REAL_ZERO_MARK="$PERSIST_DIR/.real_zeroed"
 BOOT_TOKEN="$PERSIST_DIR/.boot_try"
 # 安全模式标记（内容为触发时间）：被用户手动切回 on/dynamic 时清除。
 SAFE_MODE_MARK="$PERSIST_DIR/.safe_mode"
+# 温频历史快照（v2.16.0 F5）：每行 "epoch soc_temp cpu0 cpu6 gpu"，滚动保留 120 条。
+# 温度用真实值（_fuse_read_one 采），频率是 scaling/devfreq cur_freq 直读。
+HISTORY_LIST="${HISTORY_LIST:-$PERSIST_DIR/history.list}"
 
 # v2.8.13 省电：缓存失效检测用的时间戳标记文件。
 # 配置/列表/备份文件几乎不变，没必要每 5 秒重新解析一遍；用 `[ f -nt stamp ]`

@@ -3,7 +3,7 @@ import zipfile, os
 BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.chdir(BASE)
 src = 'GT8-ThermalRemove'
-out = 'GT8-ThermalRemove-v2.15.4.zip'
+out = 'GT8-ThermalRemove-v2.16.0.zip'
 if os.path.exists(out):
     os.remove(out)
 zf = zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED, compresslevel=9)
@@ -19,7 +19,7 @@ z = zipfile.ZipFile(out)
 names = z.namelist()
 print('files:', len(names))
 prop = z.read('module.prop').decode('utf-8')
-assert 'version=v2.15.4' in prop and 'versionCode=77' in prop, prop
+assert 'version=v2.16.0' in prop and 'versionCode=78' in prop, prop
 api = z.read('webroot/cgi-bin/api.sh').decode('utf-8')
 for needle in ['_cgi_origin_ok', '拒绝跨源写请求', '没有可保存的项', '_msg=$(_jesc',
                'fuse_trips', 'safe_mode', 'get_doctor']:
@@ -46,7 +46,7 @@ assert '07-fuse.txt' in act
 _gl = z.read('game_list.conf').decode('utf-8')
 assert 'com.mpsgame.lostabyss' in _gl, 'game_list 缺 lostabyss'
 rd = z.read('README.md').decode('utf-8')
-assert 'v2.15.4' in rd
+assert 'v2.16.0' in rd
 assert 'common/schema.sh' in names
 must = ['META-INF/com/google/android/update-binary', 'common/functions.sh',
         'common/presets.sh', 'common/conflicts.sh', 'presets/stock.conf',

@@ -761,8 +761,8 @@ cp "$MD/mode.conf" "$W/mode.conf"; cp "$MD/spoof.conf" "$W/spoof.conf"
 sec "K. 结构与静态一致性"
 _prop_v=$(grep -m1 '^version=' "$MD/module.prop" | cut -d= -f2)
 _prop_c=$(grep -m1 '^versionCode=' "$MD/module.prop" | cut -d= -f2)
-eq "K01 version=v2.15.4" "$_prop_v" "v2.15.4"
-eq "K02 versionCode=77" "$_prop_c" "77"
+eq "K01 version=v2.16.0" "$_prop_v" "v2.16.0"
+eq "K02 versionCode=78" "$_prop_c" "78"
 eq "K03 module id 未变" "$(grep -m1 '^id=' "$MD/module.prop" | cut -d= -f2)" "realme-gt8-sukisu-thermal-remove"
 _syn=0
 for f in "$MD"/*.sh "$MD"/common/*.sh "$MD"/webroot/cgi-bin/*.sh; do
@@ -814,7 +814,7 @@ for _lib in log config spoof perf system state fuse doctor; do
 done
 eq "Q02 functions.sh 纯聚合（0 函数定义）" "$(grep -cE '^[a-zA-Z_][a-zA-Z0-9_]*\(\)' "$MD/common/functions.sh")" "0"
 eq "Q03 functions.sh source 8 个 lib" "$(grep -cE '\. "\$MODDIR/common/(log|config|spoof|perf|system|state|fuse|doctor)\.sh"' "$MD/common/functions.sh")" "8"
-eq "Q04 函数总数（79 拆分 + 2 F4）" "$(grep -hE '^[a-zA-Z_][a-zA-Z0-9_]*\(\)' "$MD"/common/functions.sh "$MD"/common/log.sh "$MD"/common/config.sh "$MD"/common/spoof.sh "$MD"/common/perf.sh "$MD"/common/system.sh "$MD"/common/state.sh "$MD"/common/fuse.sh "$MD"/common/doctor.sh | wc -l | tr -d ' ')" "81"
+eq "Q04 函数总数（79 拆分 + 2 F4 + 1 F5）" "$(grep -hE '^[a-zA-Z_][a-zA-Z0-9_]*\(\)' "$MD"/common/functions.sh "$MD"/common/log.sh "$MD"/common/config.sh "$MD"/common/spoof.sh "$MD"/common/perf.sh "$MD"/common/system.sh "$MD"/common/state.sh "$MD"/common/fuse.sh "$MD"/common/doctor.sh | wc -l | tr -d ' ')" "82"
 eq "Q05 load_conf 在 config.sh" "$(grep -c '^load_conf()' "$MD/common/config.sh")" "1"
 eq "Q06 apply_spoof 在 spoof.sh" "$(grep -c '^apply_spoof()' "$MD/common/spoof.sh")" "1"
 eq "Q07 unlock_perf 在 perf.sh" "$(grep -c '^unlock_perf()' "$MD/common/perf.sh")" "1"
@@ -851,6 +851,22 @@ echo 3300 > "$TZ/thermal_zone1/temp"
 _dt=$(dump_temp 2>/dev/null | grep 'battery')
 eq "S01 dump_temp 3.3°C 而非 3300°C" "$(printf '%s' "$_dt" | grep -c '3\.3°C')" "1"
 echo 45000 > "$TZ/thermal_zone1/temp"
+
+# ══ 23. v2.16.0 F5：温频历史曲线 ═══════════════════════════
+sec "T. 温频曲线 F5"
+eq "T01 HISTORY_LIST 定义" "$(grep -c 'HISTORY_LIST=' "$MD/common/functions.sh")" "1"
+eq "T02 history_snapshot 定义" "$(grep -c '^history_snapshot()' "$MD/common/state.sh")" "1"
+eq "T03 maintain_state 调用" "$(grep -c 'history_snapshot$' "$MD/common/state.sh")" "1"
+eq "T04 api 有 get_history" "$(grep -c '^get_history()' "$MD/webroot/cgi-bin/api.sh")" "1"
+eq "T05 api 分派 --history" "$(grep -c '\-\-history) get_history' "$MD/webroot/cgi-bin/api.sh")" "1"
+eq "T06 api HISTORY_LIST 注入点" "$(grep -c 'HISTORY_LIST=' "$MD/webroot/cgi-bin/api.sh")" "1"
+eq "T07 前端 hist-svg" "$(grep -c 'id=\"hist-svg\"' "$MD/webroot/index.html")" "1"
+eq "T08 前端 renderHistory" "$(grep -c 'function renderHistory' "$MD/webroot/index.html")" "1"
+# 功能断言：假历史 → --history 输出 JSON
+printf '100 45000 1200000 2500000 500000000\n101 48000 960000 2500000 500000000\n' > "$W/history.list"
+_hj=$(HISTORY_LIST="$W/history.list" sh "$MD/webroot/cgi-bin/api.sh" --history 2>/dev/null)
+eq "T09 --history success:true" "$(printf '%s' "$_hj" | grep -c '\"success\":true')" "1"
+eq "T10 --history 含两个采样点" "$(printf '%s' "$_hj" | grep -c '\[100,')" "1"
 
 
 
