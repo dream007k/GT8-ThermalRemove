@@ -108,6 +108,7 @@ load_conf() {
             case "$_kk" in
                 MODE)               MODE=$_sv ;;
                 GAME_PROTECT)       GAME_PROTECT=$_sv ;;
+                AUTO_GAME_PRESET)   AUTO_GAME_PRESET=$_sv ;;
                 STOP_SERVICES)      STOP_SERVICES=$_sv ;;
                 UNLOCK_FREQ)        UNLOCK_FREQ=$_sv ;;
                 OPPO_SHELL_TEMP)    OPPO_SHELL_TEMP=$_sv ;;
