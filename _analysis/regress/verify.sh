@@ -102,6 +102,12 @@ export TMPDIR="$W/tmp"
 # 1.4 source functions.sh（闸门关闭状态：不建目录、不清日志）
 export MODDIR="$MD" SELF_ID="realme-gt8-sukisu-thermal-remove"
 export MODULES_DIR="$W/modules" CONF_PERSISTENT=0
+# v2.15.0：必须在 source functions.sh **之前** export 配置路径 —— functions.sh 会
+# source presets.sh，后者据此固化 PRESET_MODE_CONF；若不提前，preset_apply 会写真实
+# mode.conf（污染模块），且 G 段读影子配置永远拿到旧值。
+export MODE_CONF="$W/mode.conf" SPOOF_CONF="$W/spoof.conf"
+export GAME_LIST="$MD/game_list.conf" PROTECT_LIST="$MD/protect_list.conf"
+export PRESET_DIR="$MD/presets"
 unset TR_SIDE_EFFECTS
 FNF="$W/functions_test.sh"
 # v2.14.0（A3）：functions.sh 拆成 8 个 lib，副本生成一并处理 ——
@@ -755,8 +761,8 @@ cp "$MD/mode.conf" "$W/mode.conf"; cp "$MD/spoof.conf" "$W/spoof.conf"
 sec "K. 结构与静态一致性"
 _prop_v=$(grep -m1 '^version=' "$MD/module.prop" | cut -d= -f2)
 _prop_c=$(grep -m1 '^versionCode=' "$MD/module.prop" | cut -d= -f2)
-eq "K01 version=v2.14.3" "$_prop_v" "v2.14.3"
-eq "K02 versionCode=72" "$_prop_c" "72"
+eq "K01 version=v2.15.0" "$_prop_v" "v2.15.0"
+eq "K02 versionCode=73" "$_prop_c" "73"
 eq "K03 module id 未变" "$(grep -m1 '^id=' "$MD/module.prop" | cut -d= -f2)" "realme-gt8-sukisu-thermal-remove"
 _syn=0
 for f in "$MD"/*.sh "$MD"/common/*.sh "$MD"/webroot/cgi-bin/*.sh; do
@@ -808,7 +814,7 @@ for _lib in log config spoof perf system state fuse doctor; do
 done
 eq "Q02 functions.sh 纯聚合（0 函数定义）" "$(grep -cE '^[a-zA-Z_][a-zA-Z0-9_]*\(\)' "$MD/common/functions.sh")" "0"
 eq "Q03 functions.sh source 8 个 lib" "$(grep -cE '\. "\$MODDIR/common/(log|config|spoof|perf|system|state|fuse|doctor)\.sh"' "$MD/common/functions.sh")" "8"
-eq "Q04 函数总数守恒（79）" "$(grep -hE '^[a-zA-Z_][a-zA-Z0-9_]*\(\)' "$MD"/common/functions.sh "$MD"/common/log.sh "$MD"/common/config.sh "$MD"/common/spoof.sh "$MD"/common/perf.sh "$MD"/common/system.sh "$MD"/common/state.sh "$MD"/common/fuse.sh "$MD"/common/doctor.sh | wc -l | tr -d ' ')" "79"
+eq "Q04 函数总数（79 拆分 + 2 F4）" "$(grep -hE '^[a-zA-Z_][a-zA-Z0-9_]*\(\)' "$MD"/common/functions.sh "$MD"/common/log.sh "$MD"/common/config.sh "$MD"/common/spoof.sh "$MD"/common/perf.sh "$MD"/common/system.sh "$MD"/common/state.sh "$MD"/common/fuse.sh "$MD"/common/doctor.sh | wc -l | tr -d ' ')" "81"
 eq "Q05 load_conf 在 config.sh" "$(grep -c '^load_conf()' "$MD/common/config.sh")" "1"
 eq "Q06 apply_spoof 在 spoof.sh" "$(grep -c '^apply_spoof()' "$MD/common/spoof.sh")" "1"
 eq "Q07 unlock_perf 在 perf.sh" "$(grep -c '^unlock_perf()' "$MD/common/perf.sh")" "1"
@@ -817,6 +823,20 @@ eq "Q09 fuse_tick 在 fuse.sh" "$(grep -c '^fuse_tick()' "$MD/common/fuse.sh")" 
 eq "Q10 dump_temp 在 doctor.sh" "$(grep -c '^dump_temp()' "$MD/common/doctor.sh")" "1"
 eq "Q11 log_conflicts 在 log.sh" "$(grep -c '^log_conflicts()' "$MD/common/log.sh")" "1"
 eq "Q12 mount_config_overlays 在 system.sh" "$(grep -c '^mount_config_overlays()' "$MD/common/system.sh")" "1"
+
+# ══ 21. v2.15.0 F4：按前台应用自动切档 ═════════════════════════
+sec "R. 自动切档 F4"
+eq "R01 schema 含 AUTO_GAME_PRESET" "$(grep -c 'AUTO_GAME_PRESET' "$MD/common/schema.sh")" "5"
+eq "R02 AUTO_GAME_PRESET 归 mode+默认+不接管（3 处分支）" "$(grep -c 'AUTO_GAME_PRESET)' "$MD/common/schema.sh")" "3"
+eq "R03 AUTO_GAME_PRESET 不被预设接管" "$(grep -c 'CHECK_KNOWN_CFG|AUTO_GAME_PRESET' "$MD/common/schema.sh")" "1"
+eq "R04 state 有 auto_game_preset_tick" "$(grep -c '^auto_game_preset_tick()' "$MD/common/state.sh")" "1"
+eq "R05 state 有 _auto_find_nearest" "$(grep -c '^_auto_find_nearest()' "$MD/common/state.sh")" "1"
+eq "R06 service 调用 auto_game_preset_tick" "$(grep -c 'auto_game_preset_tick' "$MD/service.sh")" "1"
+eq "R07 functions source presets.sh" "$(grep -c 'common/presets.sh' "$MD/common/functions.sh")" "1"
+eq "R08 命中游戏切 game 档" "$(grep -c 'preset_apply game' "$MD/common/state.sh")" "1"
+eq "R09 退出恢复（3 次防抖）" "$(grep -c '_AUTO_GAME_LEAVE.*ge 3' "$MD/common/state.sh")" "1"
+eq "R10 mode.conf 有 AUTO_GAME_PRESET 注释" "$(grep -c '^AUTO_GAME_PRESET=0' "$MD/mode.conf")" "1"
+
 
 
 # ══ 13. 收尾 ═════════════════════════════════════════════════

@@ -96,10 +96,13 @@ VRR_BASE="$PERSIST_DIR/vrr_baseline.list"
 TOUCH_BAK="$PERSIST_DIR/touch_thread.bak"
 TOUCH_MARK="$PERSIST_DIR/.touch_thread.pid"
 
-MODE_CONF="$MODDIR/mode.conf"
-SPOOF_CONF="$MODDIR/spoof.conf"
-GAME_LIST="$MODDIR/game_list.conf"
-PROTECT_LIST="$MODDIR/protect_list.conf"
+# v2.15.0：配置路径改为支持环境变量覆盖（${VAR:-默认}）——回归测试在 source
+# 本文件之前 export MODE_CONF 等指向影子配置，即可让 preset_apply 等写进影子文件
+# 而非真实 mode.conf。真机不 export，行为不变（仍用 $MODDIR 下默认路径）。
+MODE_CONF="${MODE_CONF:-$MODDIR/mode.conf}"
+SPOOF_CONF="${SPOOF_CONF:-$MODDIR/spoof.conf}"
+GAME_LIST="${GAME_LIST:-$MODDIR/game_list.conf}"
+PROTECT_LIST="${PROTECT_LIST:-$MODDIR/protect_list.conf}"
 
 POLL_SECONDS=5
 RES_SPOOF_TICKS=6          # 兼容旧配置：按 tick 计的重放上限（保留以防被外部引用）
@@ -166,4 +169,5 @@ IS_A16=0
 . "$MODDIR/common/state.sh"
 . "$MODDIR/common/fuse.sh"
 . "$MODDIR/common/doctor.sh"
+. "$MODDIR/common/presets.sh"   # v2.15.0 F4：自动切档需要预设引擎
 

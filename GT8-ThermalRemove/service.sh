@@ -15,7 +15,7 @@ export TR_SIDE_EFFECTS=1
 # 导致主进程对「稍早的配置改动」漏检一次（最多 60s）。见 functions.sh 的 load_conf。
 export CONF_PERSISTENT=1
 
-log_info "==== service 启动 (v2.14.3, Android ${ANDROID_REL:-?}) ===="
+log_info "==== service 启动 (v2.15.0, Android ${ANDROID_REL:-?}) ===="
 load_conf
 
 # v2.8：模块冲突自检（只写日志，不改任何状态、不阻断启动）
@@ -74,6 +74,7 @@ main_loop() {
     _tick=0
     _maint_acc=0          # 距上次完整维护累计秒数
     _perf_acc=0           # 距上次 reapply_perf 累计秒数
+    _auto_acc=0           # 距上次「按前台应用自动切档」检测累计秒数（v2.15.0 F4）
     while true; do
         load_conf
         decide_state_into 0
@@ -117,6 +118,13 @@ main_loop() {
         else
             [ "$_cur" != "off" ] && apply_state 0
             _maint_acc=0; _perf_acc=0
+        fi
+
+        # v2.15.0 F4：按前台应用自动切档（30s 节奏，独立于 5s 温控检测，避免每 5s 跑一次重型 dumpsys）
+        _auto_acc=$((_auto_acc + POLL_SECONDS))
+        if [ "$AUTO_GAME_PRESET" = "1" ] && [ "$_auto_acc" -ge 30 ]; then
+            auto_game_preset_tick
+            _auto_acc=0
         fi
 
         _tick=$((_tick + 1))

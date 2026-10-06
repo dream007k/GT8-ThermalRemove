@@ -204,3 +204,58 @@ maintain_state() {
     [ "$FUSE_ENABLE" = "1" ] && fuse_tick
     return 0
 }
+
+# ── v2.15.0 F4：按前台应用自动切档 ────────────────────────────
+# 命中 game_list 的前台应用 → 自动应用 game 档；退出游戏 → 恢复切档前最接近的档。
+# 依赖 presets.sh（preset_apply / preset_match_into / preset_pairs）。
+# 状态全部进程内（service.sh 长驻）：_AUTO_GAME_ACTIVE（自动 game 态）、
+# _AUTO_GAME_LEAVE（连续非游戏次数，防桌面停留抖动）、_AUTO_NEAREST（切档前最接近的非 game 档）。
+# 检测节奏由 service.sh 主循环控制（默认 30s），本函数只做「本次检测」的判定与切档。
+
+# 找当前配置最接近的非 game 档（stock/daily/cool/debug），结果写 _AUTO_NEAREST。
+# 匹配率 < 50% 视为「完全自定义」，留空（退出游戏时不覆盖用户的自定义配置）。
+_auto_find_nearest() {
+    _AUTO_NEAREST=""
+    _an_best=49
+    for _an_id in stock daily cool debug; do
+        preset_match_into "$_an_id"
+        [ "${_PMT_T:-0}" -gt 0 ] 2>/dev/null || continue
+        _an_ratio=$(( _PMT_M * 100 / _PMT_T ))
+        if [ "$_an_ratio" -gt "$_an_best" ] 2>/dev/null; then
+            _an_best=$_an_ratio
+            _AUTO_NEAREST="$_an_id"
+        fi
+    done
+}
+
+auto_game_preset_tick() {
+    [ "$AUTO_GAME_PRESET" = "1" ] || { _AUTO_GAME_ACTIVE=0; _AUTO_GAME_LEAVE=0; return 0; }
+    _AUTO_GAME_ACTIVE="${_AUTO_GAME_ACTIVE:-0}"
+    _AUTO_GAME_LEAVE="${_AUTO_GAME_LEAVE:-0}"
+    _he_refresh
+    [ "$_HE_GAME" = "1" ] || { _AUTO_GAME_ACTIVE=0; _AUTO_GAME_LEAVE=0; return 0; }
+    _ag_app=$(get_focus_app)
+    if [ -n "$_ag_app" ] && is_in_list "$GAME_LIST" "$_ag_app"; then
+        # 前台是游戏
+        _AUTO_GAME_LEAVE=0
+        if [ "$_AUTO_GAME_ACTIVE" != "1" ]; then
+            _auto_find_nearest
+            if preset_apply game; then
+                _AUTO_GAME_ACTIVE=1
+                log_info "✓ 自动切档：检测到游戏 $_ag_app → 应用 game 档（之前最接近 ${_AUTO_NEAREST:-自定义}）"
+            fi
+        fi
+    elif [ "$_AUTO_GAME_ACTIVE" = "1" ]; then
+        # 前台非游戏：连续 3 次（约 90s）才恢复，避免切桌面回消息时来回抖档
+        _AUTO_GAME_LEAVE=$((_AUTO_GAME_LEAVE + 1))
+        if [ "$_AUTO_GAME_LEAVE" -ge 3 ] 2>/dev/null; then
+            if [ -n "$_AUTO_NEAREST" ]; then
+                preset_apply "$_AUTO_NEAREST" && log_info "✓ 自动切档：游戏退出 → 恢复 $_AUTO_NEAREST 档"
+            else
+                log_info "✓ 自动切档：游戏退出，保持当前配置（之前为自定义，不覆盖）"
+            fi
+            _AUTO_GAME_ACTIVE=0; _AUTO_GAME_LEAVE=0
+        fi
+    fi
+    return 0
+}
