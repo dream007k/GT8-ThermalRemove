@@ -36,6 +36,8 @@ REAL_ZERO_MARK="${REAL_ZERO_MARK:-/data/adb/thermal_remove/.real_zeroed}"
 # v2.12.0：温度保险丝的触发记录与安全模式标记（只读展示，可注入便于测试）
 FUSE_LOG="${FUSE_LOG:-/data/adb/thermal_remove/fuse.log}"
 SAFE_MODE_MARK="${SAFE_MODE_MARK:-/data/adb/thermal_remove/.safe_mode}"
+# v2.13.2（A2）：配置键唯一事实源（零副作用，可安全 source）
+. "$MODDIR/common/schema.sh" 2>/dev/null
 # 欺骗记账：apply_spoof 写成功的温感清单（dir|value 每行一条）。
 # 判定「是否欺骗中」以它为准 —— 部分厂商内核 emul_temp 回读恒为 0，
 # 回读判定会导致「欺骗实际生效但全部被判成未欺骗」，探测也随之被跳过。
@@ -514,11 +516,13 @@ do_set() {
             *)   continue ;;
         esac
         [ -n "$_k" ] || continue
-        case "$_k" in
-            MODE|GAME_PROTECT|STOP_SERVICES|UNLOCK_FREQ|OPPO_SHELL_TEMP|OPPO_GAUGE|HORAE_TESTMODE|DISABLE_ORMS|TOUCH_BOOST|TOUCH_THREAD_BOOST|PATCH_THERMAL|PATCH_EXTRA|REPLACE_ENCRYPTED|UNLOCK_CDEV|DISPLAY_PROTECT|SHOW_REAL_TEMP|UNLOCK_GPU|GPU_MAX_CLK|LOG_LEVEL|CHECK_CONFLICTS|SCAN_RESOURCES|FUSE_ENABLE|FUSE_COOLDOWN|BOOT_FAIL_LIMIT)
-                conf_set "$MODE_CONF" "$_k" "$_v" && _ds_n=$((_ds_n+1)) ;;
-            SPOOF_BATT|SOC_T|SKIN_T|CAM_T|BATT_T|SHELL_PROC_T|BLACKLIST)
-                conf_set "$SPOOF_CONF" "$_k" "$_v" && _ds_n=$((_ds_n+1)) ;;
+        # v2.13.2（A2）：白名单统一到 schema_file，值域校验统一到 schema_valid
+        # （C-3：非法值直接拒绝落盘，不再靠 load_conf 运行时兜底，避免界面与行为不一致）
+        schema_file "$_k" || continue
+        schema_valid "$_k" "$_v" || continue
+        case "$_SC_FILE" in
+            mode)  conf_set "$MODE_CONF" "$_k" "$_v" && _ds_n=$((_ds_n+1)) ;;
+            spoof) conf_set "$SPOOF_CONF" "$_k" "$_v" && _ds_n=$((_ds_n+1)) ;;
         esac
     done
     command -v log >/dev/null 2>&1 && log -t "$LOG_TAG" "config updated: $*"

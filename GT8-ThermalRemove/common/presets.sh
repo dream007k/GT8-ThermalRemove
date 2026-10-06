@@ -36,6 +36,9 @@
 [ -n "${PRESET_ENGINE_READY:-}" ] && return 0
 PRESET_ENGINE_READY=1
 
+# v2.13.2（A2）：键的归属/默认值/值域统一到 schema.sh（加键只改那一处）
+. "${MODDIR:-/data/adb/modules/realme-gt8-sukisu-thermal-remove}/common/schema.sh" 2>/dev/null
+
 # 路径：优先用调用方已设好的变量（api.sh / functions.sh 都设了 MODE_CONF），
 # 缺省时按标准安装路径推导。PRESET_DIR 可由调用方覆盖（测试台用）。
 PRESET_MODDIR="${MODDIR:-/data/adb/modules/realme-gt8-sukisu-thermal-remove}"
@@ -67,88 +70,30 @@ _pm_strip() {
 
 # ── 键白名单：判定某键可写、写到哪份配置 ───────────────────────
 # 输出 mode / spoof；不在白名单内返回 1（调用方静默跳过）。
+# v2.13.2（A2）：归属查 schema_file、可接管性查 schema_preset_ok（约束 3 的
+# BLACKLIST / 界面偏好 / 内部调优键预设不接管），不再在此维护键清单。
 preset_route_key() {
-    case "$1" in
-        MODE|GAME_PROTECT|STOP_SERVICES|UNLOCK_FREQ|UNLOCK_GPU|GPU_MAX_CLK|\
-PATCH_THERMAL|PATCH_EXTRA|UNLOCK_CDEV|DISPLAY_PROTECT|OPPO_SHELL_TEMP|\
-OPPO_GAUGE|HORAE_TESTMODE|DISABLE_ORMS|TOUCH_BOOST|TOUCH_THREAD_BOOST|\
-CHECK_CONFLICTS|SCAN_RESOURCES|LOG_LEVEL|MAINT_SECONDS|PERF_REFRESH_SECONDS|\
-FUSE_ENABLE|FUSE_COOLDOWN|BOOT_FAIL_LIMIT|FUSE_TEMP_BATT|FUSE_TEMP_SOC|FUSE_TEMP_SKIN)
-            printf 'mode'; return 0 ;;
-        SPOOF_BATT|SOC_T|SKIN_T|CAM_T|BATT_T|SHELL_PROC_T)
-            printf 'spoof'; return 0 ;;
-    esac
-    return 1
+    schema_file "$1" || return 1
+    schema_preset_ok "$1" || return 1
+    printf '%s' "$_SC_FILE"
+    return 0
 }
 
-# ── 取值校验：枚举 / 0-1 开关 / 数值范围 ───────────────────────
+# ── 取值校验：枚举 / 0-1 开关 / 数值范围（统一到 schema_valid）──
 preset_valid_value() {
-    _pv_k="$1"; _pv_v="$2"
-    case "$_pv_k" in
-        MODE)      case "$_pv_v" in dynamic|always|off) return 0 ;; esac; return 1 ;;
-        LOG_LEVEL) case "$_pv_v" in debug|info|warn|error) return 0 ;; esac; return 1 ;;
-        SOC_T|SKIN_T|CAM_T|BATT_T|SHELL_PROC_T)
-            case "$_pv_v" in ''|*[!0-9]*) return 1 ;; esac
-            [ "$_pv_v" -le 100000 ] && return 0
-            return 1 ;;
-        GPU_MAX_CLK)
-            case "$_pv_v" in ''|*[!0-9]*) return 1 ;; esac
-            [ "$_pv_v" -ge 1 ] && [ "$_pv_v" -le 2147483647 ] && return 0
-            return 1 ;;
-        MAINT_SECONDS)
-            case "$_pv_v" in ''|*[!0-9]*) return 1 ;; esac
-            [ "$_pv_v" -ge 5 ] && [ "$_pv_v" -le 86400 ] && return 0
-            return 1 ;;
-        PERF_REFRESH_SECONDS)
-            case "$_pv_v" in ''|*[!0-9]*) return 1 ;; esac
-            [ "$_pv_v" -le 86400 ] && return 0
-            return 1 ;;
-        FUSE_TEMP_BATT|FUSE_TEMP_SOC|FUSE_TEMP_SKIN)
-            case "$_pv_v" in ''|*[!0-9]*) return 1 ;; esac
-            [ "$_pv_v" -le 120000 ] && return 0
-            return 1 ;;
-        FUSE_COOLDOWN)
-            case "$_pv_v" in ''|*[!0-9]*) return 1 ;; esac
-            [ "$_pv_v" -ge 5 ] && [ "$_pv_v" -le 86400 ] && return 0
-            return 1 ;;
-        BOOT_FAIL_LIMIT)
-            case "$_pv_v" in ''|*[!0-9]*) return 1 ;; esac
-            [ "$_pv_v" -ge 1 ] && [ "$_pv_v" -le 20 ] && return 0
-            return 1 ;;
-    esac
-    case "$_pv_v" in 0|1) return 0 ;; esac   # 其余一律当作 0/1 开关
-    return 1
+    schema_valid "$1" "$2"
 }
 
-# ── 内置默认值：与 functions.sh 的 load_conf 默认表保持一致 ─────
+# ── 内置默认值：统一到 schema_default，与 load_conf 同一份 ─────
 # 用途：配置里**缺键**时，模块实际按内置默认值运行；判定"当前是否匹配某档"
 # 必须用同一套默认值，否则缺键会被判成"不匹配"。
 # 结果写 _PM_DEF（避免 $() 子 shell：preset_match 会调上百次）。
 preset_default_of() {
-    case "$1" in
-        MODE) _pmd_v=dynamic ;;
-        GAME_PROTECT|STOP_SERVICES|OPPO_SHELL_TEMP|OPPO_GAUGE|HORAE_TESTMODE|\
-DISABLE_ORMS|UNLOCK_CDEV|TOUCH_THREAD_BOOST|PATCH_EXTRA|SCAN_RESOURCES)
-            _pmd_v=0 ;;
-        UNLOCK_FREQ|PATCH_THERMAL|TOUCH_BOOST|UNLOCK_GPU|DISPLAY_PROTECT|\
-CHECK_CONFLICTS)
-            _pmd_v=1 ;;
-        GPU_MAX_CLK)          _pmd_v=2147483647 ;;
-        LOG_LEVEL)            _pmd_v=info ;;
-        MAINT_SECONDS)        _pmd_v=120 ;;
-        PERF_REFRESH_SECONDS) _pmd_v=30 ;;
-        # v2.12.0：温度保险丝默认值（与 functions.sh 的 load_conf 默认表一致）
-        FUSE_ENABLE)          _pmd_v=1 ;;
-        FUSE_TEMP_BATT)       _pmd_v=45000 ;;
-        FUSE_TEMP_SOC)        _pmd_v=80000 ;;
-        FUSE_TEMP_SKIN)       _pmd_v=46000 ;;
-        FUSE_COOLDOWN)        _pmd_v=120 ;;
-        BOOT_FAIL_LIMIT)      _pmd_v=3 ;;
-        SPOOF_BATT)           _pmd_v=1 ;;
-        SOC_T|SKIN_T|CAM_T|BATT_T|SHELL_PROC_T) _pmd_v=29500 ;;
-        *)                    _pmd_v="" ;;
-    esac
-    _PM_DEF="$_pmd_v"
+    if schema_default "$1"; then
+        _PM_DEF="$_SC_DEF"
+    else
+        _PM_DEF=""
+    fi
     return 0
 }
 

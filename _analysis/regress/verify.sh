@@ -661,12 +661,58 @@ eq "O08 api --doctor 返回成功" "$(printf '%s' "$_dj" | grep -c '"success":tr
 eq "O09 api 报告含 8 节" "$(printf '%s' "$_dj" | grep -cE '1/8|8/8')" "2"
 cp "$MD/mode.conf" "$W/mode.conf"; cp "$MD/spoof.conf" "$W/spoof.conf"
 
-# ══ 17. 结构与静态一致性 ════════════════════════════════════
+
+# ══ 18. v2.13.2 schema 单一事实源（A2）══════════════════════════
+sec "P. schema 单一事实源"
+# 完整性：SCHEMA_KEYS 每个键都有归属且都有默认值
+_sok=0
+for _k in $SCHEMA_KEYS; do
+    schema_file "$_k" || _sok=$((_sok+1))
+    schema_default "$_k" || _sok=$((_sok+1))
+done
+eq "P01 schema 键齐全（归属+默认）" "$_sok" "0"
+# LOAD_CONF_KEYS ⊆ SCHEMA_KEYS
+_sok2=0
+for _k in $LOAD_CONF_KEYS; do
+    case " $SCHEMA_KEYS " in *" $_k "*) ;; *) _sok2=$((_sok2+1)) ;; esac
+done
+eq "P02 LOAD_CONF_KEYS 是 SCHEMA_KEYS 子集" "$_sok2" "0"
+# load_conf 用 schema_apply_defaults 后，每个消费键都已被初始化
+cp "$MD/mode.conf" "$W/mode.conf"; cp "$MD/spoof.conf" "$W/spoof.conf"
+reload
+_sok3=0
+for _k in $LOAD_CONF_KEYS; do
+    eval "_pv=\${$_k:-}"
+    [ -n "$_pv" ] || { case "$_k" in BLACKLIST) ;; *) _sok3=$((_sok3+1)) ;; esac; }
+done
+eq "P03 load_conf 初始化所有消费键" "$_sok3" "0"
+# schema_valid 关键规则抽测
+schema_valid MODE dynamic; eq "P04 valid(MODE,dynamic)" "$?" "0"
+schema_valid MODE whatever; [ $? -ne 0 ] && ok || bad "P05 invalid(MODE,whatever)" "0" "非0"
+schema_valid FUSE_TEMP_BATT 45000; eq "P06 valid(FUSE_TEMP_BATT,45000)" "$?" "0"
+schema_valid FUSE_TEMP_BATT 999999; [ $? -ne 0 ] && ok || bad "P07 invalid(FUSE_TEMP_BATT,999999)" "0" "非0"
+schema_valid TOUCH_THREAD_NICE -19; eq "P08 valid(TOUCH_THREAD_NICE,-19)" "$?" "0"
+schema_valid BLACKLIST '*disp* *panel*'; eq "P09 BLACKLIST 任意值合法" "$?" "0"
+# C-3：do_set 非法值被拒（零写入），合法值照常写入
+_before=$(md5sum < "$W/mode.conf")
+api_call --set MODE=whatever >/dev/null 2>&1
+_after=$(md5sum < "$W/mode.conf")
+eq "P10 do_set 非法 MODE 被拒且零写入" "$_before" "$_after"
+api_call --set MODE=always >/dev/null 2>&1
+eq "P11 do_set 合法 MODE 写入" "$(conf_get "$W/mode.conf" MODE x)" "always"
+# preset_route_key 走 schema（约束 3 的个性化键仍被拒）
+preset_route_key BLACKLIST; [ $? -ne 0 ] && ok || bad "P12 预设不接管 BLACKLIST" "0" "非0"
+preset_route_key TOUCH_THREAD_NICE; [ $? -ne 0 ] && ok || bad "P13 预设不接管 TOUCH_THREAD_NICE" "0" "非0"
+eq "P14 预设接管 MODE 且归属 mode" "$(preset_route_key MODE)" "mode"
+eq "P15 预设默认值走 schema（MAINT=120）" "$(preset_default_of MAINT_SECONDS; printf '%s' "$_PM_DEF")" "120"
+cp "$MD/mode.conf" "$W/mode.conf"; cp "$MD/spoof.conf" "$W/spoof.conf"
+
+# ══ 19. 结构与静态一致性 ════════════════════════════════════
 sec "K. 结构与静态一致性"
 _prop_v=$(grep -m1 '^version=' "$MD/module.prop" | cut -d= -f2)
 _prop_c=$(grep -m1 '^versionCode=' "$MD/module.prop" | cut -d= -f2)
-eq "K01 version=v2.13.1" "$_prop_v" "v2.13.1"
-eq "K02 versionCode=66" "$_prop_c" "66"
+eq "K01 version=v2.13.2" "$_prop_v" "v2.13.2"
+eq "K02 versionCode=67" "$_prop_c" "67"
 eq "K03 module id 未变" "$(grep -m1 '^id=' "$MD/module.prop" | cut -d= -f2)" "realme-gt8-sukisu-thermal-remove"
 _syn=0
 for f in "$MD"/*.sh "$MD"/common/*.sh "$MD"/webroot/cgi-bin/*.sh; do

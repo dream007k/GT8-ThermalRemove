@@ -132,6 +132,8 @@ CONF_FORCE_TICKS=12        # 配置/列表缓存的强制刷新兜底（12 × 5s
 MODULES_DIR="${MODULES_DIR:-/data/adb/modules}"
 SELF_ID="${SELF_ID:-realme-gt8-sukisu-thermal-remove}"
 . "$MODDIR/common/conflicts.sh" 2>/dev/null
+# v2.13.2（A2）：配置键唯一事实源（schema_file / schema_default / schema_valid）
+. "$MODDIR/common/schema.sh" 2>/dev/null
 
 # v2.9.3 修复：source-time 副作用闸门。
 # 本文件被 6 处入口 source，其中 api.sh 的 get_verify、action.sh 的部分诊断命令
@@ -307,42 +309,13 @@ load_conf() {
     # 行为保持：只取**第一次**出现的键（与原 sed -n 's/^k=//p' | head -1 一致），
     # 空值回落到默认值；行尾空白与首尾引号处理沿用 _strip。
 
-    MODE=dynamic
-    GAME_PROTECT=0; STOP_SERVICES=0; UNLOCK_FREQ=1; OPPO_SHELL_TEMP=0
-    OPPO_GAUGE=0; HORAE_TESTMODE=0; DISABLE_ORMS=0; TOUCH_BOOST=1
-    TOUCH_THREAD_BOOST=0; TOUCH_THREAD_NICE=-19
-    PATCH_THERMAL=1; PATCH_EXTRA=0
-    UNLOCK_CDEV=0
-    UNLOCK_GPU=1
-    GPU_MAX_CLK=2147483647
-    DISPLAY_PROTECT=1
-    CHECK_CONFLICTS=1
-    SCAN_RESOURCES=0
-    REPLACE_ENCRYPTED=0
-    MAINT_SECONDS=120
-    PERF_REFRESH_SECONDS=30
-    LOG_HEARTBEAT=12
-    CONF_FORCE_TICKS=12
-    LOG_LEVEL=info
+    # v2.13.2（A2）：默认值统一到 schema（加键只改 schema.sh，不再维护这里的逐行赋值）
+    schema_apply_defaults
+    # 内部状态键（不进 schema，仅 load_conf 使用）
     _MAINT_EXPLICIT=0
     _RES_EXPLICIT=0
-
-    # ── v2.12.0 温度保险丝 ─────────────────────────────────────
-    # 单位毫摄氏度；0 = 关闭该路。默认值刻意保守（电池 45°C 起跳）：
-    # 保险丝是"最后一道软件防线"，宁可偶尔早触发，也不要漏触发。
-    FUSE_ENABLE=1
-    FUSE_TEMP_BATT=45000
-    FUSE_TEMP_SOC=80000
-    FUSE_TEMP_SKIN=46000
-    FUSE_COOLDOWN=120
-    # 真值采样前的等待：写 emul_temp=0 后隔多久读 temp（部分内核不会立刻刷新）。
-    # 测试环境可设 0 跳过等待。80ms 与 api.sh 的真实温度探测保持同一量级。
+    # 保险丝采样等待（不进 conf，测试环境用环境变量覆盖为 0 跳过等待）
     FUSE_DELAY_MS=80
-    # 连续多少次开机未完成即自动进入安全模式
-    BOOT_FAIL_LIMIT=3
-
-    SOC_T=29500; SKIN_T=29500; CAM_T=29500; BATT_T=29500
-    SPOOF_BATT=1; SHELL_PROC_T=29500; BLACKLIST=""
 
     _lc_seen=""
     for _lc_f in "$MODE_CONF" "$SPOOF_CONF"; do
@@ -362,6 +335,14 @@ load_conf() {
             _lc_v=${_lc_ln#*=}
             case " $_lc_seen " in *" $_kk "*) continue ;; esac
             _strip "$_lc_v"
+            # 废弃键兼容：v2.8.12 前的 RES_SPOOF_TICKS 不在 schema 里，单独处理
+            case "$_kk" in
+                RES_SPOOF_TICKS)
+                    RES_SPOOF_TICKS=$_sv; _RES_EXPLICIT=1
+                    _lc_seen="$_lc_seen $_kk"; continue ;;
+            esac
+            # v2.13.2（A2）：白名单统一到 schema（未登记键一律跳过）
+            schema_file "$_kk" || continue
             case "$_kk" in
                 MODE)               MODE=$_sv ;;
                 GAME_PROTECT)       GAME_PROTECT=$_sv ;;
@@ -388,7 +369,6 @@ load_conf() {
                 LOG_HEARTBEAT)        LOG_HEARTBEAT=$_sv ;;
                 CONF_FORCE_TICKS)     CONF_FORCE_TICKS=$_sv ;;
                 LOG_LEVEL)            LOG_LEVEL=$_sv ;;
-                RES_SPOOF_TICKS)      RES_SPOOF_TICKS=$_sv;     _RES_EXPLICIT=1 ;;
                 FUSE_ENABLE)          FUSE_ENABLE=$_sv ;;
                 FUSE_TEMP_BATT)       FUSE_TEMP_BATT=$_sv ;;
                 FUSE_TEMP_SOC)        FUSE_TEMP_SOC=$_sv ;;
@@ -402,7 +382,6 @@ load_conf() {
                 SPOOF_BATT)         SPOOF_BATT=$_sv ;;
                 SHELL_PROC_T)       SHELL_PROC_T=$_sv ;;
                 BLACKLIST)          BLACKLIST=$_sv ;;
-                *) continue ;;
             esac
             _lc_seen="$_lc_seen $_kk"
         done < "$_lc_f"
