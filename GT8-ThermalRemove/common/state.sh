@@ -235,7 +235,10 @@ auto_game_preset_tick() {
     _he_refresh
     [ "$_HE_GAME" = "1" ] || { _AUTO_GAME_ACTIVE=0; _AUTO_GAME_LEAVE=0; return 0; }
     _ag_app=$(get_focus_app)
+    # v2.15.3：debug 心跳 —— 每 30s 打印一次前台包名与命中判定，用于确认 F4 是否在跑、
+    # get_focus_app 解析是否正确。info 阈值下零成本（分级判断在 date 之前，见 log.sh）。
     if [ -n "$_ag_app" ] && is_in_list "$GAME_LIST" "$_ag_app"; then
+        log_debug "F4 心跳：前台包名=[$_ag_app] 命中游戏=是"
         # 前台是游戏
         _AUTO_GAME_LEAVE=0
         if [ "$_AUTO_GAME_ACTIVE" != "1" ]; then
@@ -248,6 +251,7 @@ auto_game_preset_tick() {
     elif [ "$_AUTO_GAME_ACTIVE" = "1" ]; then
         # 前台非游戏：连续 3 次（约 90s）才恢复，避免切桌面回消息时来回抖档
         _AUTO_GAME_LEAVE=$((_AUTO_GAME_LEAVE + 1))
+        log_debug "F4 心跳：前台包名=[${_ag_app:-空}] 命中游戏=否（累计离开 ${_AUTO_GAME_LEAVE}/3）"
         if [ "$_AUTO_GAME_LEAVE" -ge 3 ] 2>/dev/null; then
             if [ -n "$_AUTO_NEAREST" ]; then
                 preset_apply "$_AUTO_NEAREST" && log_info "✓ 自动切档：游戏退出 → 恢复 $_AUTO_NEAREST 档"
@@ -256,6 +260,8 @@ auto_game_preset_tick() {
             fi
             _AUTO_GAME_ACTIVE=0; _AUTO_GAME_LEAVE=0
         fi
+    else
+        log_debug "F4 心跳：前台包名=[${_ag_app:-空}] 命中游戏=否"
     fi
     return 0
 }
