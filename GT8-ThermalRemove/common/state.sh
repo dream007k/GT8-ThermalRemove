@@ -219,11 +219,15 @@ history_snapshot() {
         _hty=""; read -r _hty < "$_hz/type" 2>/dev/null
         [ -n "$_hty" ] || continue
         is_blacklisted "$_hty" && continue
-        case "$_hty" in *soc*|*cpu-0-*|*ap*) _hs_z="$_hz"; break ;; esac
+        # v2.17.2：匹配规则与 fuse_sample_check 的 SoC 路**保持一致**
+        # （原先这里是 *soc*|*cpu-0-*|*ap*，比保险丝窄：同一台设备保险丝选到的
+        #  SoC 温感与曲线画的 SoC 可能不是同一个，用户无法对照阈值标定曲线）。
+        case "$_hty" in *soc*|*cpu*|*ap*|*gpu*|*tsens*) _hs_z="$_hz"; break ;; esac
     done
     _hs_soc=""
     [ -n "$_hs_z" ] && _fuse_read_one "$_hs_z" && _hs_soc="$_FR_VAL"
-    # 频率（纯读；cpu6 / GPU 跨机型兜底）
+    # 频率（纯读）。cpu6 是「首个大核」——本模块面向骁龙 8E 的 8 核布局
+    # (cpu0-5 小核 / cpu6-7 大核)；其它核数机型读不到时降级为 0（前端跳过该点）。
     _hs_c0=""; read -r _hs_c0 < /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq 2>/dev/null
     _hs_c6=""; read -r _hs_c6 < /sys/devices/system/cpu/cpu6/cpufreq/scaling_cur_freq 2>/dev/null
     _hs_gpu=""
@@ -257,6 +261,23 @@ _auto_find_nearest() {
             _AUTO_NEAREST="$_an_id"
         fi
     done
+    # v2.17.2：落盘（自定义档写空文件，判据是「非空」）。用 `: >` 清内容而非 rm，
+    # 与 boot token / safe_mode 标记保持一致 —— 不依赖删除，零 fork。
+    if [ -n "$_AUTO_NEAREST" ]; then
+        printf '%s' "$_AUTO_NEAREST" > "$AUTO_NEAREST_FILE" 2>/dev/null
+    else
+        : > "$AUTO_NEAREST_FILE" 2>/dev/null
+    fi
+}
+
+# v2.17.2：从落盘文件读回 nearest（服务重启后进程内变量已丢）。
+# 白名单校验：文件可被外部编辑，只认四个已知档名，其余一律当「自定义」。
+_auto_load_nearest() {
+    _an_v=""; read -r _an_v < "$AUTO_NEAREST_FILE" 2>/dev/null
+    case "$_an_v" in
+        stock|daily|cool|debug) _AUTO_NEAREST="$_an_v" ;;
+        *)                      _AUTO_NEAREST="" ;;
+    esac
 }
 
 auto_game_preset_tick() {
@@ -273,7 +294,13 @@ auto_game_preset_tick() {
         # 前台是游戏
         _AUTO_GAME_LEAVE=0
         if [ "$_AUTO_GAME_ACTIVE" != "1" ]; then
-            _auto_find_nearest
+            # v2.17.2：已有落盘记录说明「本轮游戏期已经开始过、只是服务重启过」，
+            # 此时当前配置已是 game 档，重算会得到错误结果 → 直接复用落盘值。
+            if [ -s "$AUTO_NEAREST_FILE" ]; then
+                _auto_load_nearest
+            else
+                _auto_find_nearest
+            fi
             if preset_apply game; then
                 _AUTO_GAME_ACTIVE=1
                 log_info "✓ 自动切档：检测到游戏 $_ag_app → 应用 game 档（之前最接近 ${_AUTO_NEAREST:-自定义}）"

@@ -33,6 +33,38 @@ LOG_TAG="gt8_thermal_webui"
 # 真实温度探测的恢复标记：写 0 前落盘「目录|伪装值」，恢复后清除。
 # 若探测进程中途被杀，下次探测会先按它自愈（否则该温感欺骗会一直失效）。
 REAL_ZERO_MARK="${REAL_ZERO_MARK:-/data/adb/thermal_remove/.real_zeroed}"
+# v2.17.2：与保险丝采样 / 温频快照共用 REAL_ZERO_MARK 的互斥锁（见 functions.sh 注释）。
+# 本脚本不 source functions.sh，故此处独立实现一份（逻辑与 functions.sh 一致）。
+REAL_ZERO_LOCK="${REAL_ZERO_LOCK:-/data/adb/thermal_remove/.realzero.lock}"
+_rz_lock() {
+    # 持锁期间锁目录内放 pid 文件：①别人删不掉（目录非空）→ 不会被抢锁；
+    # ②本进程被杀后残留的锁可由「pid 是否还活着」精确识别并清理（不用 find，
+    #   find -maxdepth/-mmin 在部分环境的 find 上不受支持，会退化成全盘遍历）。
+    if mkdir "$REAL_ZERO_LOCK" 2>/dev/null; then
+        printf '%s' "$$" > "$REAL_ZERO_LOCK/pid" 2>/dev/null
+        return 0
+    fi
+    _rzp=""; read -r _rzp < "$REAL_ZERO_LOCK/pid" 2>/dev/null
+    case "$_rzp" in
+        ''|*[!0-9]*) : ;;                 # 损坏/缺失的 pid 文件 → 当作陈旧处理
+        *) kill -0 "$_rzp" 2>/dev/null && return 1 ;;   # 持锁者还活着 → 放弃本轮
+    esac
+    rm -rf "$REAL_ZERO_LOCK" 2>/dev/null
+    if mkdir "$REAL_ZERO_LOCK" 2>/dev/null; then
+        printf '%s' "$$" > "$REAL_ZERO_LOCK/pid" 2>/dev/null
+        return 0
+    fi
+    return 1
+}
+_rz_unlock() {
+    # 只释放**自己**持有的锁：pid 不匹配就什么都不做。现有调用路径都只在 lock
+    # 成功后配对 unlock，但一旦将来出现「lock 失败也走 unlock」的分支，无保护的
+    # unlock 会把别人的活锁删掉 → 互斥形同虚设。校验一行成本，换掉整类隐患。
+    _rzu=""; read -r _rzu < "$REAL_ZERO_LOCK/pid" 2>/dev/null
+    [ "$_rzu" = "$$" ] || return 0
+    rm -rf "$REAL_ZERO_LOCK" 2>/dev/null
+    return 0
+}
 # v2.12.0：温度保险丝的触发记录与安全模式标记（只读展示，可注入便于测试）
 FUSE_LOG="${FUSE_LOG:-/data/adb/thermal_remove/fuse.log}"
 SAFE_MODE_MARK="${SAFE_MODE_MARK:-/data/adb/thermal_remove/.safe_mode}"
@@ -77,6 +109,7 @@ _cgi_origin_ok() {
 # v2.9.3：CR 供「去行尾 \r」用（read 内建替代 tr -d '\r'，避免每次 fork）。
 # printf 是 POSIX 内建，启动期算一次即可；本脚本独立于 functions.sh，故自带一份。
 CR_API=$(printf '\r')
+LF_API=$(printf '\n')
 
 # JSON 字符串转义：反斜杠与双引号加反斜杠，并剥掉控制字符。
 # sed 的替换里 `\\&` = 字面反斜杠 + 被匹配字符（& 是"整个匹配"）。
@@ -143,15 +176,25 @@ conf_get() {
 conf_set() {
     _f="$1"; _k="$2"; _v="$3"
     [ -f "$_f" ] || return 1
+    # v2.17.2 安全：剥除换行/回车。**行式配置里「值含换行」等于凭空插入任意新键**：
+    # BLACKLIST 的值域校验是放行（schema_valid 里 return 0），若原样写入就能在
+    # spoof.conf 里追加第二行（如 FUSE_TEMP_BATT=999999999 → 保险丝永不触发），
+    # 绕过 schema_valid 的值域校验。常见值不含换行 → case 检测零 fork。
+    case "$_v" in
+        *"$LF_API"*|*"$CR_API"*) _v=$(printf '%s' "$_v" | tr '\r\n' '  ') ;;
+    esac
     # v2.8.4：替换文本里的 & 是「整个匹配」、| 是新定界符、\ 是转义符 ——
     # 直接内插进 s/…/…/ 会导致内容错乱（值含 & 时会把整行塞进去）或
     # 直接报错（值含 / 时把它当定界符，保存静默失败）。
     # 这里先转义这三个字符，再改用 | 作定界符。
     _e=$(printf '%s' "$_v" | sed 's/[&|\\]/\\&/g')
     if awk -v k="$_k=" 'index($0,k)==1 { f=1 } END { exit !f }' "$_f" 2>/dev/null; then
-        sed -i "s|^$_k=.*|$_k=$_e|" "$_f"
+        # v2.17.2：写失败必须返回非 0。原实现无条件 return 0，磁盘满 / 只读 /
+        # 无 sed 时 do_set 仍把 _ds_n 递增并回「已保存」—— v2.11.2 的「如实提示」
+        # 就是被这个假成功绕过的（与 presets.sh 的 _pconf_set 行为也不一致）。
+        sed -i "s|^$_k=.*|$_k=$_e|" "$_f" || return 1
     else
-        echo "$_k=$_v" >> "$_f"
+        printf '%s=%s\n' "$_k" "$_v" >> "$_f" || return 1
     fi
     return 0
 }
@@ -417,7 +460,10 @@ get_temps() {
     _pok=0; _ptot=0
     if [ "$_real" = "1" ] && [ -s "$_tmp.h" ]; then
         awk -F'|' '$4=="1"{print $5}' "$_tmp.h" > "$_tmp.d" 2>/dev/null
-        if [ -s "$_tmp.d" ]; then
+        # v2.17.2：整个批量探测（3 轮 × 数十~上百温感）持有互斥锁，避免与
+        # service 的保险丝采样 / 温频快照争抢 REAL_ZERO_MARK。拿不到锁就跳过
+        # 本段 → _pok=0 → 前端显示「--」，如实回报失败而不是硬抢。
+        if [ -s "$_tmp.d" ] && _rz_lock; then
             # 待探测集合：目录|伪装值|扫描时的读数（=伪装值，用作失败判定基准）
             awk -F'|' '$4=="1"{print $5"|"$6"|"$3}' "$_tmp.h" > "$_tmp.p"
             _ms=$(conf_get "$MODE_CONF" REAL_TEMP_DELAY_MS 80)
@@ -473,6 +519,7 @@ get_temps() {
                 }
                 { $7 = (($5 in r) ? r[$5] : ""); print }' "$_tmp.h" > "$_tmp.m" 2>/dev/null \
                 && mv -f "$_tmp.m" "$_tmp.h" 2>/dev/null
+            _rz_unlock
         fi
     fi
 
@@ -516,7 +563,12 @@ get_temps() {
 do_set() {
     shift 2>/dev/null
     _ds_n=0
+    _ds_keys=""
     for _kv in "$@"; do
+        # v2.17.2 安全：整条键值对先剥换行，堵死「值内含换行」的注入面
+        case "$_kv" in
+            *"$LF_API"*|*"$CR_API"*) _kv=$(printf '%s' "$_kv" | tr '\r\n' '  ') ;;
+        esac
         # v2.9.3：原实现 `$(echo | cut -f1 -d '=')` + `cut -f2 -d '='` = 每对
         # 两次 fork，且 `-f2` 会把含 '=' 的值截断（如未来支持 URL 类值时）。
         # 参数展开零 fork 且语义正确：%%=* 取首个 '=' 之前、#*= 取其之后。
@@ -530,11 +582,14 @@ do_set() {
         schema_file "$_k" || continue
         schema_valid "$_k" "$_v" || continue
         case "$_SC_FILE" in
-            mode)  conf_set "$MODE_CONF" "$_k" "$_v" && _ds_n=$((_ds_n+1)) ;;
-            spoof) conf_set "$SPOOF_CONF" "$_k" "$_v" && _ds_n=$((_ds_n+1)) ;;
+            mode)  conf_set "$MODE_CONF" "$_k" "$_v" && { _ds_n=$((_ds_n+1)); _ds_keys="$_ds_keys $_k"; } ;;
+            spoof) conf_set "$SPOOF_CONF" "$_k" "$_v" && { _ds_n=$((_ds_n+1)); _ds_keys="$_ds_keys $_k"; } ;;
         esac
     done
-    command -v log >/dev/null 2>&1 && log -t "$LOG_TAG" "config updated: $*"
+    # v2.17.2：只记**键名**，不记值。原实现记 $*（含用户传入的全部值），值里一个
+    # 换行就能伪造日志行 —— 诊断包会把日志带出去，伪造行会误导事后排查。
+    [ -n "$_ds_keys" ] && command -v log >/dev/null 2>&1 && \
+        log -t "$LOG_TAG" "config updated:$_ds_keys"
     # v2.11.2：没有任何键真正落盘时如实提示 —— 原实现空写入也报
     # 「已保存」，用户写了个不支持的键名会以为生效了。
     if [ "$_ds_n" = "0" ]; then
@@ -568,9 +623,15 @@ get_log_full() {
 get_history() {
     _rows=""
     _first=1
-    while read -r _h_e _h_s _h_c0 _h_c6 _h_g; do
-        [ -n "$_h_e" ] || continue
-        case "$_h_e" in ''|*[!0-9]*) continue ;; esac
+    # v2.17.2：字段数必须正好 5（_h_x 是「多出来的」哨兵），且全部为数字。
+    # 原实现只校验第 1 个字段：进程在 >> 写入中途被杀会留下半行 → 输出 [1,2,,,]
+    # 这种非法 JSON，前端 JSON.parse 直接抛异常、整条曲线都渲染不出来。
+    while read -r _h_e _h_s _h_c0 _h_c6 _h_g _h_x; do
+        [ -z "$_h_x" ] || continue
+        [ -n "${_h_g:-}" ] || continue
+        case "$_h_e$_h_s$_h_c0$_h_c6$_h_g" in
+            ''|*[!0-9]*) continue ;;
+        esac
         [ "$_first" = "1" ] && _first=0 || _rows="$_rows,"
         _rows="$_rows[$_h_e,$_h_s,$_h_c0,$_h_c6,$_h_g]"
     done < "$HISTORY_LIST" 2>/dev/null

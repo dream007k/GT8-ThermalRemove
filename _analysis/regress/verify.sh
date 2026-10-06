@@ -40,7 +40,17 @@ bad() { N=$((N+1)); F=$((F+1));
         printf 'FAIL #%-3s %s\n         got=[%s] want=[%s]\n' "$N" "$1" "$2" "$3" | tee -a "$FAIL_LOG"; }
 eq()  { if [ "$2" = "$3" ]; then ok; else bad "$1" "$2" "$3"; fi; }
 
-sec() { printf '\n── %s ──\n' "$1"; }
+# 分组计时：每组结束时打印上一组耗时。定位「哪一组慢」用；默认一直开着，
+# 因为 Windows Git Bash 的 fork 成本比真机高一个量级，回归超时时全靠它定位。
+_SEC_T0=$SECONDS; _SEC_LAST=""
+sec() {
+  if [ -n "$_SEC_LAST" ]; then
+    _SEC_D=$((SECONDS - _SEC_T0))
+    [ "$_SEC_D" -ge 20 ] && printf '   ⏱ %s 用时 %ss\n' "$_SEC_LAST" "$_SEC_D"
+  fi
+  _SEC_T0=$SECONDS; _SEC_LAST="$1"
+  printf '\n── %s ──\n' "$1"
+}
 
 # ══ 1. 环境搭建 ══════════════════════════════════════════════
 # 1.1 Android 命令 shim
@@ -172,6 +182,7 @@ export FUSE_LOG="$PERSIST_DIR/fuse.log"
 export BOOT_TOKEN="$PERSIST_DIR/.boot_try"
 export SAFE_MODE_MARK="$PERSIST_DIR/.safe_mode"
 export REAL_ZERO_MARK="$PERSIST_DIR/.real_zeroed"
+export REAL_ZERO_LOCK="$PERSIST_DIR/.realzero.lock"
 mkdir -p "$PERSIST_DIR"
 
 reload() { _CONF_LOADED=0; load_conf; }
@@ -761,8 +772,8 @@ cp "$MD/mode.conf" "$W/mode.conf"; cp "$MD/spoof.conf" "$W/spoof.conf"
 sec "K. 结构与静态一致性"
 _prop_v=$(grep -m1 '^version=' "$MD/module.prop" | cut -d= -f2)
 _prop_c=$(grep -m1 '^versionCode=' "$MD/module.prop" | cut -d= -f2)
-eq "K01 version=v2.17.1" "$_prop_v" "v2.17.1"
-eq "K02 versionCode=80" "$_prop_c" "80"
+eq "K01 version=v2.17.2" "$_prop_v" "v2.17.2"
+eq "K02 versionCode=81" "$_prop_c" "81"
 eq "K03 module id 未变" "$(grep -m1 '^id=' "$MD/module.prop" | cut -d= -f2)" "realme-gt8-sukisu-thermal-remove"
 _syn=0
 for f in "$MD"/*.sh "$MD"/common/*.sh "$MD"/webroot/cgi-bin/*.sh; do
@@ -814,7 +825,9 @@ for _lib in log config spoof perf system state fuse doctor; do
 done
 eq "Q02 functions.sh 纯聚合（0 函数定义）" "$(grep -cE '^[a-zA-Z_][a-zA-Z0-9_]*\(\)' "$MD/common/functions.sh")" "0"
 eq "Q03 functions.sh source 8 个 lib" "$(grep -cE '\. "\$MODDIR/common/(log|config|spoof|perf|system|state|fuse|doctor)\.sh"' "$MD/common/functions.sh")" "8"
-eq "Q04 函数总数（79 拆分 + 2 F4 + 1 F5）" "$(grep -hE '^[a-zA-Z_][a-zA-Z0-9_]*\(\)' "$MD"/common/functions.sh "$MD"/common/log.sh "$MD"/common/config.sh "$MD"/common/spoof.sh "$MD"/common/perf.sh "$MD"/common/system.sh "$MD"/common/state.sh "$MD"/common/fuse.sh "$MD"/common/doctor.sh | wc -l | tr -d ' ')" "82"
+eq "Q04 函数总数（79 拆分 + 2 F4 + 1 F5 + 1 快照 + 1 nearest + 2 锁 = 85）" "$(grep -hE '^[a-zA-Z_][a-zA-Z0-9_]*\(\)' "$MD"/common/functions.sh "$MD"/common/log.sh "$MD"/common/config.sh "$MD"/common/spoof.sh "$MD"/common/perf.sh "$MD"/common/system.sh "$MD"/common/state.sh "$MD"/common/fuse.sh "$MD"/common/doctor.sh | wc -l | tr -d ' ')" "85"
+eq "Q04b 采样互斥锁在 fuse.sh" "$(grep -c '^_realzero_lock()' "$MD/common/fuse.sh")" "1"
+eq "Q04c 互斥锁不在聚合入口（仅注释可提及）" "$(grep -cE '^_realzero_lock\(\)' "$MD/common/functions.sh")" "0"
 eq "Q05 load_conf 在 config.sh" "$(grep -c '^load_conf()' "$MD/common/config.sh")" "1"
 eq "Q06 apply_spoof 在 spoof.sh" "$(grep -c '^apply_spoof()' "$MD/common/spoof.sh")" "1"
 eq "Q07 unlock_perf 在 perf.sh" "$(grep -c '^unlock_perf()' "$MD/common/perf.sh")" "1"
@@ -883,6 +896,32 @@ sec "V. 首屏优化"
 eq "V01 favicon 内联" "$(grep -c 'rel=\"icon\" href=\"data:,' "$MD/webroot/index.html")" "1"
 eq "V02 源码仍外链 style.css" "$(grep -c 'rel=\"stylesheet\" href=\"style.css\"' "$MD/webroot/index.html")" "1"
 eq "V03 pack.py 有内联逻辑" "$(grep -c '_css = io.open' "$BASE/_analysis/regress/pack.py")" "1"
+
+# ══ 26. v2.17.2 代码审核修复 ══════════════════════════════
+sec "W. 审核修复"
+eq "W01 conf_set 折换行（定义+2 处使用）" "$(grep -c 'LF_API' "$MD/webroot/cgi-bin/api.sh")" "3"
+eq "W02 conf_set 写失败返回非0" "$(grep -c 'sed -i "s|^\$_k=\.|\|$_k=$_e|" "$_f" || return 1' "$MD/webroot/cgi-bin/api.sh")" "1"
+eq "W03 do_set 日志只记键名" "$(grep -cF 'config updated:$_ds_keys' "$MD/webroot/cgi-bin/api.sh")" "1"
+eq "W04 get_history 字段哨兵（read+判空+注释）" "$(grep -c '_h_x' "$MD/webroot/cgi-bin/api.sh")" "3"
+eq "W05 fuse 有采样互斥锁" "$(grep -c '^_realzero_lock()' "$MD/common/fuse.sh")" "1"
+eq "W06 fuse 两处采样加锁" "$(grep -c '_realzero_lock || return' "$MD/common/fuse.sh")" "2"
+eq "W07 api 批量探测加锁" "$(grep -c '_rz_lock; then' "$MD/webroot/cgi-bin/api.sh")" "1"
+eq "W08 AUTO_NEAREST_FILE 定义" "$(grep -c 'AUTO_NEAREST_FILE=' "$MD/common/functions.sh")" "1"
+eq "W09 nearest 白名单读回" "$(grep -c '^_auto_load_nearest()' "$MD/common/state.sh")" "1"
+eq "W10 曲线自动刷新带 hidden 闸门" "$(grep -c 'if (!document.hidden) loadHistory()' "$MD/webroot/index.html")" "1"
+
+# 功能断言 W11：含换行的值不得注入出新配置键
+cp "$MD/spoof.conf" "$W/spoof.conf"
+api_call --set "BLACKLIST=foo
+MODE=always" >/dev/null 2>&1
+if grep -q '^MODE=' "$W/spoof.conf"; then bad "W11 换行注入被拦截" "MODE 出现在 spoof.conf" "无 MODE 行"; else ok; fi
+cp "$MD/spoof.conf" "$W/spoof.conf"
+
+# 功能断言 W12：字段不足/超出的历史行被跳过，JSON 仍合法
+printf '100 45000 1200000 2500000 500000000\n101 48000\n102 49000 1200000 2500000 500000000 extra\n103 47000 960000 2400000 490000000\n' > "$W/history.list"
+_hj2=$(HISTORY_LIST="$W/history.list" sh "$MD/webroot/cgi-bin/api.sh" --history 2>/dev/null)
+eq "W12 合法点保留（100 与 103）" "$(printf '%s' "$_hj2" | grep -cF '[103,47000')" "1"
+eq "W13 字段不足/超出的行被跳过" "$(printf '%s' "$_hj2" | grep -cE '\[101,|\[102,')" "0"
 
 
 

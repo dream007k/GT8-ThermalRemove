@@ -58,12 +58,29 @@ FUSE_LOG="$PERSIST_DIR/fuse.log"
 # v2.12.0 起 api.sh 的真实温度探测与 functions.sh 的保险丝采样**共用**这一个文件，
 # 路径必须与 api.sh 的默认值保持一致。
 REAL_ZERO_MARK="$PERSIST_DIR/.real_zeroed"
+# v2.17.2：REAL_ZERO_MARK 的互斥锁。该标记文件被三方共用 ——
+#   ① 保险丝采样 fuse_tick（每维护周期，3 路）
+#   ② 温频快照 history_snapshot（每维护周期，1 路）
+#   ③ WebUI 真实温度探测 api.sh --real（用户手动）
+# 三者模式相同：写标记 → 采样(写 emul_temp=0) → 恢复伪装值 → 清标记。
+# 并发时的失效序列：A 写标记 → B 追加标记 → A 恢复并清空标记 → B 在恢复前被杀
+#   → B 的温感欺骗停在 0，且标记已被 A 清空 → 下轮自愈看不到残留 → 欺骗失效不自愈
+#   （最长要等下一次 apply_spoof 重放，120s）。
+# mkdir 在本地文件系统上是原子操作，用它互斥；拿不到锁就**跳过本轮采样**
+# （保险丝少采一轮不影响安全判定，WebUI 探测如实回报失败让用户重试）。
+REAL_ZERO_LOCK="${REAL_ZERO_LOCK:-$PERSIST_DIR/.realzero.lock}"
+# （锁实现 _realzero_lock/_realzero_unlock 在 fuse.sh，与采样逻辑同域）
 # 开机尝试计数：post-fs-data 每次 +1，boot-completed 清零。
 # 连续 BOOT_FAIL_LIMIT 次没走到 boot-completed（异常/崩溃/开不了机）→ 自动安全模式。
 # 这是 KernelSU 模块的通用自救惯例：宁可少一次去温控，也不要卡开机。
 BOOT_TOKEN="$PERSIST_DIR/.boot_try"
 # 安全模式标记（内容为触发时间）：被用户手动切回 on/dynamic 时清除。
 SAFE_MODE_MARK="$PERSIST_DIR/.safe_mode"
+# v2.17.2：F4 自动切档的「切档前最接近的档」落盘位置。原实现只放进程内变量，
+# service 重启（崩溃 / 重启手机 / 被其他工具 kill）后丢失：若重启时用户正在游戏，
+# 重新检测会基于「已经是 game 档」的当前配置重算，退出游戏后恢复到某个非 game 档，
+# 用户切档前的配置（尤其自定义配置）就此丢失。判据是「文件非空」。
+AUTO_NEAREST_FILE="${AUTO_NEAREST_FILE:-$PERSIST_DIR/.auto_nearest}"
 # 温频历史快照（v2.16.0 F5）：每行 "epoch soc_temp cpu0 cpu6 gpu"，滚动保留 120 条。
 # 温度用真实值（_fuse_read_one 采），频率是 scaling/devfreq cur_freq 直读。
 HISTORY_LIST="${HISTORY_LIST:-$PERSIST_DIR/history.list}"

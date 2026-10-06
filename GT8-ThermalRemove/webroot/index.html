@@ -1401,7 +1401,9 @@ function toggleHistAuto() {
     HIST_AUTO = true;
     if (b) b.textContent = '自动刷新中（120s）';
     loadHistory();
-    HIST_TIMER = setInterval(loadHistory, 120000);
+    /* v2.17.2：与主轮询一致加 document.hidden 闸门 —— 页面在后台时这个
+       定时器仍在跑，每 120s 都会真的发一次请求（CGI fork + 读文件），白耗电。 */
+    HIST_TIMER = setInterval(function(){ if (!document.hidden) loadHistory(); }, 120000);
   }
 }
 

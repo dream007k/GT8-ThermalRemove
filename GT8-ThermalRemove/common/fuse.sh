@@ -19,6 +19,36 @@
 #   · 默认保守 —— 电池 45℃ 起跳；三路阈值全 0 即整体关闭。
 # ══════════════════════════════════════════════════════════════
 
+_realzero_lock() {
+    # 持锁期间锁目录内放 pid 文件：①别人删不掉（目录非空）→ 不会被抢锁；
+    # ②本进程被杀后残留的锁可由「pid 是否还活着」精确识别并清理（不用 find，
+    #   find -maxdepth/-mmin 在部分环境的 find 上不受支持，会退化成全盘遍历）。
+    if mkdir "$REAL_ZERO_LOCK" 2>/dev/null; then
+        printf '%s' "$$" > "$REAL_ZERO_LOCK/pid" 2>/dev/null
+        return 0
+    fi
+    _rzp=""; read -r _rzp < "$REAL_ZERO_LOCK/pid" 2>/dev/null
+    case "$_rzp" in
+        ''|*[!0-9]*) : ;;                 # 损坏/缺失的 pid 文件 → 当作陈旧处理
+        *) kill -0 "$_rzp" 2>/dev/null && return 1 ;;   # 持锁者还活着 → 放弃本轮
+    esac
+    rm -rf "$REAL_ZERO_LOCK" 2>/dev/null
+    if mkdir "$REAL_ZERO_LOCK" 2>/dev/null; then
+        printf '%s' "$$" > "$REAL_ZERO_LOCK/pid" 2>/dev/null
+        return 0
+    fi
+    return 1
+}
+_realzero_unlock() {
+    # 只释放**自己**持有的锁：pid 不匹配就什么都不做。现有调用路径都只在 lock
+    # 成功后配对 unlock，但一旦将来出现「lock 失败也走 unlock」的分支，无保护的
+    # unlock 会把别人的活锁删掉 → 互斥形同虚设。校验一行成本，换掉整类隐患。
+    _rzu=""; read -r _rzu < "$REAL_ZERO_LOCK/pid" 2>/dev/null
+    [ "$_rzu" = "$$" ] || return 0
+    rm -rf "$REAL_ZERO_LOCK" 2>/dev/null
+    return 0
+}
+
 _fuse_msleep() {
     _fm="$1"
     case "$_fm" in ''|*[!0-9]*) _fm=80 ;; esac
@@ -39,14 +69,19 @@ _fuse_probe_one() {
     _fp_ty=""; read -r _fp_ty < "$_fp_d/type" 2>/dev/null
     [ -n "$_fp_ty" ] || _fp_ty=${_fp_d##*/}
     zone_target_into "$_fp_ty"; _fp_spoof="$_ZTV"
+    # v2.17.2：拿不到互斥锁就跳过本轮采样（详见 functions.sh REAL_ZERO_LOCK 注释）
+    _realzero_lock || return 0
     # 短暂关闭仿真读真值；写不进去（被第三方加锁等）就跳过本轮
-    echo 0 > "$_fp_d/emul_temp" 2>/dev/null || return 0
+    if ! echo 0 > "$_fp_d/emul_temp" 2>/dev/null; then
+        _realzero_unlock; return 0
+    fi
     echo "$_fp_d|$_fp_spoof" >> "$REAL_ZERO_MARK" 2>/dev/null
     _fuse_msleep "${FUSE_DELAY_MS:-80}"
     _fp_real=""; read -r _fp_real < "$_fp_d/temp" 2>/dev/null
     # 立刻恢复伪装值（缩短暴露窗口）并清掉恢复标记 —— 顺序不能反
     echo "$_fp_spoof" > "$_fp_d/emul_temp" 2>/dev/null
     : > "$REAL_ZERO_MARK" 2>/dev/null
+    _realzero_unlock
     case "$_fp_real" in ''|*[!0-9-]*) return 0 ;; esac
     [ "$_fp_real" = "$_fp_spoof" ] && return 0     # 读到的仍是伪装值 → 内核未刷新，不可信
     [ "$_fp_real" -gt "$_fp_th" ] 2>/dev/null || return 0
@@ -128,14 +163,19 @@ _fuse_read_one() {
     _fr_ty=""; read -r _fr_ty < "$_fr_d/type" 2>/dev/null
     [ -n "$_fr_ty" ] || _fr_ty="${_fr_d##*/}"
     zone_target_into "$_fr_ty"; _fr_spoof="$_ZTV"
+    # v2.17.2：拿不到互斥锁就如实返回失败（不冒充；调用方据此显示「读不到」）
+    _realzero_lock || return 1
     # 短暂关仿真读真值；写不进去就如实返回失败（不冒充）
-    echo 0 > "$_fr_d/emul_temp" 2>/dev/null || return 1
+    if ! echo 0 > "$_fr_d/emul_temp" 2>/dev/null; then
+        _realzero_unlock; return 1
+    fi
     echo "$_fr_d|$_fr_spoof" >> "$REAL_ZERO_MARK" 2>/dev/null
     _fuse_msleep "${FUSE_DELAY_MS:-80}"
     _fr_r=""; read -r _fr_r < "$_fr_d/temp" 2>/dev/null
     # 立刻写回伪装值（zone_target_into，与 _fuse_probe_one 一致）—— 顺序不能反
     echo "$_fr_spoof" > "$_fr_d/emul_temp" 2>/dev/null
     : > "$REAL_ZERO_MARK" 2>/dev/null
+    _realzero_unlock
     case "$_fr_r" in ''|*[!0-9-]*) return 1 ;; esac
     [ "$_fr_r" = "$_fr_spoof" ] && return 1   # 读到伪装值 = 内核未刷新，不可信
     _FR_VAL="$_fr_r"

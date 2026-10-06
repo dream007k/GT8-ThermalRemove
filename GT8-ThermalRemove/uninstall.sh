@@ -27,8 +27,19 @@ fi
     rm -f "$MODDIR/.webui-httpd.pid"
 }
 
-# 停掉主循环
-pkill -f "$MODDIR/service.sh" 2>/dev/null
+# 停掉主循环。v2.17.2：原来只靠 pkill，设备缺 pkill（部分精简 ROM）或模式匹配
+# 不到时，守护进程会留下来持续空转 —— 它守护的 /data/adb/thermal_remove 已经被
+# 下面删掉，于是每次维护周期都往不存在的目录写、每次判断都失败。先 pidof 再退回
+# pkill，并在两条路都失败时明确提示用户手动处理。
+_rzl=0
+if command -v pidof >/dev/null 2>&1; then
+    for _rp in $(pidof sh 2>/dev/null); do
+        grep -qa "service.sh" "/proc/$_rp/cmdline" 2>/dev/null || continue
+        kill "$_rp" 2>/dev/null && _rzl=1
+    done
+fi
+[ "$_rzl" = "0" ] && pkill -f "$MODDIR/service.sh" 2>/dev/null && _rzl=1
+[ "$_rzl" = "0" ] && echo "提示：未能自动停止守护进程，请手动执行：pkill -f $MODDIR/service.sh"
 
 # v2.8.7：/data/system 显示配置的「首次快照」刻意保留下来，不跟着一起删。
 # 它存在的意义就是应对「别的模块 sed -i 改坏了配置、又没有卸载脚本」——
