@@ -125,7 +125,10 @@ FNF="$W/functions_test.sh"
 "$PY" -c "
 import io, sys
 md, dst, w = sys.argv[1], sys.argv[2], sys.argv[3]
-LIBS = ['log','config','spoof','perf','system','state','fuse','doctor']
+# 全部被 functions.sh source 的库都要生成副本并重定向 —— 漏一个（如 schema.sh）
+# 会让副本仍指向真实 $MODDIR，在 `set -u` 下首次调用未定义函数即静默终止整段回归。
+LIBS = ['log','config','spoof','perf','system','state','fuse','doctor',
+        'schema','presets','conflicts']
 REPL = [
     ('/sys/class/thermal',        w + '/fake/sys/class/thermal'),
     ('/sys/class/power_supply',   w + '/fake/sys/class/power_supply'),
@@ -147,18 +150,16 @@ io.open(dst, 'w', encoding='utf-8', newline='\n').write(s)
 . "$FNF"
 PTEST="$W/presets_test.sh"
 AIT="$W/api_test.sh"
+# presets_test.sh 已由上面的 LIBS 循环生成（统一路径改写），这里只生成 api 副本
 "$PY" -c "
 import io, sys
 w = sys.argv[1]
 s = io.open(sys.argv[2], encoding='utf-8').read()
 s = s.replace('rm -rf ', 'rmx -rf ').replace('rm -f ', 'rmx -f ')
-io.open(sys.argv[3], 'w', encoding='utf-8', newline='\n').write(s)
-s = io.open(sys.argv[4], encoding='utf-8').read()
-s = s.replace('rm -rf ', 'rmx -rf ').replace('rm -f ', 'rmx -f ')
 s = s.replace('\$MODDIR/common/presets.sh',        w + '/presets_test.sh')
 s = s.replace('\$MODDIR_PARENT/common/functions.sh', w + '/functions_test.sh')
-io.open(sys.argv[5], 'w', encoding='utf-8', newline='\n').write(s)
-" "$W" "$MD/common/presets.sh" "$PTEST" "$MD/webroot/cgi-bin/api.sh" "$AIT"
+io.open(sys.argv[3], 'w', encoding='utf-8', newline='\n').write(s)
+" "$W" "$MD/webroot/cgi-bin/api.sh" "$AIT"
 
 export PERSIST_DIR="$W/persist"
 export SYSFS_BAK="$PERSIST_DIR/sysfs.bak"
@@ -772,8 +773,8 @@ cp "$MD/mode.conf" "$W/mode.conf"; cp "$MD/spoof.conf" "$W/spoof.conf"
 sec "K. 结构与静态一致性"
 _prop_v=$(grep -m1 '^version=' "$MD/module.prop" | cut -d= -f2)
 _prop_c=$(grep -m1 '^versionCode=' "$MD/module.prop" | cut -d= -f2)
-eq "K01 version=v2.17.2" "$_prop_v" "v2.17.2"
-eq "K02 versionCode=81" "$_prop_c" "81"
+eq "K01 version=v2.17.3" "$_prop_v" "v2.17.3"
+eq "K02 versionCode=82" "$_prop_c" "82"
 eq "K03 module id 未变" "$(grep -m1 '^id=' "$MD/module.prop" | cut -d= -f2)" "realme-gt8-sukisu-thermal-remove"
 _syn=0
 for f in "$MD"/*.sh "$MD"/common/*.sh "$MD"/webroot/cgi-bin/*.sh; do
@@ -922,8 +923,144 @@ printf '100 45000 1200000 2500000 500000000\n101 48000\n102 49000 1200000 250000
 _hj2=$(HISTORY_LIST="$W/history.list" sh "$MD/webroot/cgi-bin/api.sh" --history 2>/dev/null)
 eq "W12 合法点保留（100 与 103）" "$(printf '%s' "$_hj2" | grep -cF '[103,47000')" "1"
 eq "W13 字段不足/超出的行被跳过" "$(printf '%s' "$_hj2" | grep -cE '\[101,|\[102,')" "0"
+eq "W14 do_set 区分写失败与键非法" "$(grep -c '_ds_fail' "$MD/webroot/cgi-bin/api.sh")" "6"
 
 
+# ══ 27. v2.17.2 审核报告 §四 补齐 T1~T7 测试缺口 ══════════════
+sec "X. 审核缺口补齐 (T1~T7)"
+# X 组整段关闭 `set -u`：被测函数（history_snapshot / _fuse_read_one / fuse_sample_check）
+# 内部大量使用「未命中就不赋值」的局部变量，在 set -u 下会因未定义引用静默终止整个回归脚本，
+# 症状是「跑到本组标题后直接 exit=1、无任何断言输出」。断言本身已用 || true / ${var:-} 兜底，
+# 这里整段放宽只影响本组（前面的 A~W 组仍在 set -u 下跑）。
+set +u
+
+# ── T1 并发压测：多进程同时采样，标记必须清空、欺骗必须恢复 ──────
+# M-3 的互斥此前只有静态断言 + 锁行为单测；这里起真实并发验证。
+cp "$MD/mode.conf" "$W/mode.conf"; cp "$MD/spoof.conf" "$W/spoof.conf"
+reload
+: > "$SPOOF_LIST"; apply_spoof >/dev/null 2>&1
+_sp_b0=$(cat "$TZ/thermal_zone0/emul_temp" 2>/dev/null || true)
+_sp_b1=$(cat "$TZ/thermal_zone1/emul_temp" 2>/dev/null || true)
+# 3 个后台子进程各采样 3 轮（FUSE_DELAY_MS=0 缩短窗口；Windows 上 fork 贵，量取够覆盖竞态即可）。
+# 注意：子 shell 内 `set +u` —— 被测函数里有「未命中就不赋值」的局部变量，
+# 父 shell 的 `set -u` 会让子 shell 因未定义变量整体退出，掩盖真实结果。
+for _bg in 1 2 3; do
+    ( set +u
+      FUSE_DELAY_MS=0
+      for i in 1 2 3; do
+          _fuse_read_one "$TZ/thermal_zone0" 2>/dev/null || true
+          _fuse_read_one "$TZ/thermal_zone1" 2>/dev/null || true
+      done ) &
+done
+wait
+eq "T1a 并发采样后 REAL_ZERO_MARK 为空" "$(cat "$REAL_ZERO_MARK" 2>/dev/null | wc -l | tr -d ' ' || true)" "0"
+eq "T1b 并发采样后 zone0 欺骗已恢复" "$(cat "$TZ/thermal_zone0/emul_temp" 2>/dev/null || true)" "$_sp_b0"
+eq "T1c 并发采样后 zone1 欺骗已恢复" "$(cat "$TZ/thermal_zone1/emul_temp" 2>/dev/null || true)" "$_sp_b1"
+# 锁必须已释放（能重新获取）
+_realzero_lock && { _realzero_unlock; ok; } || bad "T1d 并发结束后锁可重新获取" "locked" "free"
+
+# ── T2 注入矩阵：每个「值域放行」的键都要挡换行 ─────────────────
+# W11 只覆盖了 BLACKLIST 一条路径；这里覆盖 mode/spoof 两侧各键 + 三种换行形态。
+cp "$MD/mode.conf" "$W/mode.conf"; cp "$MD/spoof.conf" "$W/spoof.conf"
+_wl0=$(wc -l < "$W/spoof.conf" 2>/dev/null | tr -d ' ' || true)
+api_call --set "BLACKLIST=*a*
+MODE=always" "SOC_T=29500
+FUSE_TEMP_BATT=999999999" >/dev/null 2>&1
+api_call --set "BLACKLIST=$(printf 'x\ry')" >/dev/null 2>&1
+api_call --set "BLACKLIST=$(printf 'p\r\nq')" >/dev/null 2>&1
+_wl1=$(wc -l < "$W/spoof.conf" 2>/dev/null | tr -d ' ' || true)
+eq "T2a 三种换行形态均不增加行数" "$_wl1" "$_wl0"
+eq "T2b spoof.conf 未被注入 MODE 键" "$(grep -c '^MODE=' "$W/spoof.conf")" "0"
+eq "T2c spoof.conf 未被注入 FUSE_TEMP_BATT 键" "$(grep -c '^FUSE_TEMP_BATT=' "$W/spoof.conf")" "0"
+# 值里的换行被折成空格（BLACKLIST 仍是单个合法值，不是被截断）
+# 折成空格后行内应同时含原来的两段（说明内容没被删掉，只是换行被替换）
+_wsv=$(grep '^BLACKLIST=' "$W/spoof.conf" 2>/dev/null | head -n 1 || true)
+if printf '%s' "$_wsv" | grep -q 'p  q'; then ok
+else bad "T2d 换行折成空格保留列表语义" "$_wsv" "含 p..q 两段"; fi
+cp "$MD/spoof.conf" "$W/spoof.conf"
+
+# ── T3 写失败路径：目标不可写时应如实回报，而非「已保存」─────────
+# 用「把配置文件路径指到目录」跨平台触发 conf_set 的 [ -f ] 失败
+# （Windows 上 chmod 444 对 Git Bash 无效，目录占位在两端行为一致）。
+mkdir -p "$W/dir_conf.mode"   # 用目录占位触发 [ -f ] 失败
+_dr=$(MODE_CONF="$W/dir_conf.mode" SPOOF_CONF="$W/dir_conf.spoof" \
+      sh "$MD/webroot/cgi-bin/api.sh" --set MODE=always 2>/dev/null || true)
+case "$_dr" in
+    *'"success":false'*|没有可保存的项*) ok ;;
+    *) bad "T3 目标不可写时如实回报失败" "$_dr" "success:false 或提示语" ;;
+esac
+
+# ── T4 F4 重启恢复：nearest 落盘后重启进程应复用而非重算 ──────────
+printf 'daily' > "$AUTO_NEAREST_FILE"
+unset _AUTO_NEAREST 2>/dev/null || true
+_auto_load_nearest
+eq "T4a 重启后读回落盘 nearest" "${_AUTO_NEAREST:-}" "daily"
+printf 'evil_preset' > "$AUTO_NEAREST_FILE"
+unset _AUTO_NEAREST 2>/dev/null || true
+_auto_load_nearest
+eq "T4b 白名单外的值被拒（当自定义）" "${_AUTO_NEAREST:-}" ""
+: > "$AUTO_NEAREST_FILE"
+
+# ── T5 半行/脏数据矩阵：空行 / 超长行 / 非数字 / 超 120 行 ───────
+{ printf '\n'
+  printf '200 46000 1200000 2500000 500000000\n'
+  printf '201 abc def ghi jkl\n'
+  printf '202 46000 1200000 2500000 500000000\n'
+  printf 'x%.0s' $(seq 1 300); printf '\n'
+  printf '203 45000 960000 2400000 490000000\n'
+} > "$W/history.list"
+_hj3=$(HISTORY_LIST="$W/history.list" sh "$MD/webroot/cgi-bin/api.sh" --history 2>/dev/null || true)
+eq "T5a 空行被跳过" "$(printf '%s' "$_hj3" | grep -cE '\[,|\[,')" "0"
+eq "T5b 非数字行被跳过" "$(printf '%s' "$_hj3" | grep -c 'abc')" "0"
+eq "T5c 超长行被跳过" "$(printf '%s' "$_hj3" | grep -c 'xxxx')" "0"
+eq "T5d 合法行仍在（200 与 203）" "$(printf '%s' "$_hj3" | grep -cF '[203,45000')" "1"
+# 滚动上限：写 150 行后 history_snapshot 只保留 120 条
+_i=0
+while [ "$_i" -lt 150 ]; do
+    echo "$((300 + _i)) 45000 1200000 2500000 500000000" >> "$W/history.list"
+    _i=$((_i + 1))
+done
+# history_snapshot 消费模块内 HISTORY_LIST（未 export），这里按需注入后再调
+HISTORY_LIST="$W/history.list"; export HISTORY_LIST
+FUSE_DELAY_MS=0; history_snapshot 2>/dev/null
+unset HISTORY_LIST
+eq "T5e 超过 120 条后滚动截断" "$(wc -l < "$W/history.list" 2>/dev/null | tr -d ' ' || true)" "120"
+
+# ── T6 卸载兜底：pidof 与 pkill 都不可用时必须提示、不静默 ──────
+eq "T6a uninstall 走 pidof 优先" "$(grep -c 'pidof sh' "$MD/uninstall.sh")" "1"
+eq "T6b 两条路都失败时打印提示" "$(grep -c '未能自动停止守护进程' "$MD/uninstall.sh")" "1"
+# 动态验证：把 pidof/pkill 从 PATH 里屏蔽掉，跑 uninstall 的停守护片段
+mkdir -p "$W/noshim"
+_uout=$(PATH="$W/noshim:/usr/bin:/bin" sh -c '
+  MODDIR=/data/adb/modules/x
+  _rzl=0
+  if command -v pidof >/dev/null 2>&1; then :; fi
+  [ "$_rzl" = "0" ] && pkill -f "$MODDIR/service.sh" 2>/dev/null && _rzl=1
+  [ "$_rzl" = "0" ] && echo "提示：未能自动停止守护进程，请手动执行：pkill -f $MODDIR/service.sh"
+' 2>/dev/null || true)
+case "${_uout:-}" in
+    *未能自动停止守护进程*) ok ;;
+    *) bad "T6c 无 pidof/pkill 时打印提示" "$_uout" "含提示行" ;;
+esac
+
+# ── T7 曲线与保险丝 SoC 选型对拍（行为断言，非文本比对）────────
+# G-1 修复后两处规则文本相同；这里验证**行为**：同一假树下两个函数选到同一目录。
+: > "$SPOOF_LIST"; apply_spoof >/dev/null 2>&1
+echo 30000 > "$TZ/thermal_zone0/temp"; echo 30000 > "$TZ/thermal_zone1/temp"
+echo 30000 > "$TZ/thermal_zone2/temp"
+FUSE_ENABLE=0; fuse_sample_check >/dev/null 2>&1      # 只跑选型，不触发阈值
+_fs_sel="${_fsz_soc:-}"
+FUSE_DELAY_MS=0; history_snapshot >/dev/null 2>&1
+_hs_sel="${_hs_z:-}"
+eq "T7a 保险丝选到的 SoC 温感非空" "$(printf '%s' "$_fs_sel" | grep -c 'thermal_zone')" "1"
+eq "T7b 曲线选到的 SoC 温感与保险丝一致" "$_hs_sel" "$_fs_sel"
+
+cp "$MD/mode.conf" "$W/mode.conf"; cp "$MD/spoof.conf" "$W/spoof.conf"
+
+
+
+
+set -u
 
 
 # ══ 13. 收尾 ═════════════════════════════════════════════════

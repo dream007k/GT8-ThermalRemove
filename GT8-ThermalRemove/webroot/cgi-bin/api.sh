@@ -564,6 +564,7 @@ do_set() {
     shift 2>/dev/null
     _ds_n=0
     _ds_keys=""
+    _ds_fail=0
     for _kv in "$@"; do
         # v2.17.2 安全：整条键值对先剥换行，堵死「值内含换行」的注入面
         case "$_kv" in
@@ -581,9 +582,17 @@ do_set() {
         # （C-3：非法值直接拒绝落盘，不再靠 load_conf 运行时兜底，避免界面与行为不一致）
         schema_file "$_k" || continue
         schema_valid "$_k" "$_v" || continue
+        # v2.17.2：把「键合法但写盘失败」与「键不合法」分开计数 ——
+        # 两者都让 _ds_n 不增，但性质完全不同：前者是环境问题（只读/满/路径不存在），
+        # 需要用户去查；后者只是键名写错。混成同一条 success:true 提示会让前端弹绿条，
+        # 用户以为「没这个键而已」，实际是配置根本没写进去。
         case "$_SC_FILE" in
-            mode)  conf_set "$MODE_CONF" "$_k" "$_v" && { _ds_n=$((_ds_n+1)); _ds_keys="$_ds_keys $_k"; } ;;
-            spoof) conf_set "$SPOOF_CONF" "$_k" "$_v" && { _ds_n=$((_ds_n+1)); _ds_keys="$_ds_keys $_k"; } ;;
+            mode)  if conf_set "$MODE_CONF" "$_k" "$_v"; then
+                       _ds_n=$((_ds_n+1)); _ds_keys="$_ds_keys $_k"
+                   else _ds_fail=$((_ds_fail+1)); fi ;;
+            spoof) if conf_set "$SPOOF_CONF" "$_k" "$_v"; then
+                       _ds_n=$((_ds_n+1)); _ds_keys="$_ds_keys $_k"
+                   else _ds_fail=$((_ds_fail+1)); fi ;;
         esac
     done
     # v2.17.2：只记**键名**，不记值。原实现记 $*（含用户传入的全部值），值里一个
@@ -592,7 +601,13 @@ do_set() {
         log -t "$LOG_TAG" "config updated:$_ds_keys"
     # v2.11.2：没有任何键真正落盘时如实提示 —— 原实现空写入也报
     # 「已保存」，用户写了个不支持的键名会以为生效了。
-    if [ "$_ds_n" = "0" ]; then
+    if [ "$_ds_fail" -gt 0 ]; then
+        # 有键通过了白名单与值域校验、却写不进盘 —— 如实报失败（success:false），
+        # 前端据此弹错误条而不是绿色成功条。
+        _ds_msg="写入失败：配置目录不可写或已满（${_ds_fail} 项未保存）"
+        [ "$_ds_n" -gt 0 ] && _ds_msg="部分成功：${_ds_n} 项已写入，${_ds_fail} 项失败（配置目录不可写或已满）"
+        echo "{\"success\":false,\"message\":\"$(_jesc "$_ds_msg")\"}"
+    elif [ "$_ds_n" = "0" ]; then
         echo '{"success":true,"message":"没有可保存的项（键名不在白名单或未提供键值）"}'
     else
         echo '{"success":true,"message":"已保存，5 秒内生效"}'
