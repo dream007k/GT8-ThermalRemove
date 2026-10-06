@@ -245,18 +245,30 @@ button:disabled{opacity:.55}
 /* ── 模块冲突检测（v2.8）────────────────── */
 .cbox{margin-top:14px;background:var(--hot-soft);border:1px solid #f6d7d7}
 .cbox-title{margin:0 0 8px;font-size:14.5px;font-weight:700;color:#a83232}
+.ccount{font-size:11.5px;font-weight:500;color:var(--muted);margin-left:4px}
 .clist{list-style:none;margin:0;padding:0}
 .clist li{
-  padding:9px 11px;margin-bottom:8px;border-radius:13px;
+  padding:8px 11px;margin-bottom:8px;border-radius:13px;
   background:var(--card);border:1px solid var(--line);
 }
 .clist li.hi{border-color:#f6d7d7}
 .clist li:last-child{margin-bottom:0}
-.clist .cn{font-size:14px;font-weight:650;color:var(--text)}
+/* v2.14.2 紧凑展示：标题行 flex 一行式，详情折叠 */
+.clist .chead{display:flex;align-items:center;gap:7px;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.clist .crisk{flex:none;padding:1px 7px;border-radius:999px;font-size:11px;font-weight:700}
+.clist .r-hi{background:#fde3e3;color:#a83232}
+.clist .r-mid{background:#fdf1dd;color:#a06b0a}
+.clist .r-low{background:var(--bg);color:var(--muted)}
+.clist .cn{flex:1;min-width:0;font-size:14px;font-weight:650;color:var(--text);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .clist .cv{
-  margin-left:6px;padding:1px 7px;border-radius:999px;
+  flex:none;padding:1px 7px;border-radius:999px;
   font-size:11.5px;color:var(--muted);background:var(--bg);
 }
+.clist .carrow{flex:none;color:var(--muted);font-size:11px;transition:transform .15s}
+.clist li.open .carrow{transform:rotate(180deg)}
+.clist .cdetail{display:none;margin-top:6px}
+.clist li.open .cdetail{display:block}
 .clist .cid{
   display:block;margin-top:3px;word-break:break-all;
   font:11.5px/1.4 ui-monospace,Consolas,monospace;color:var(--muted);

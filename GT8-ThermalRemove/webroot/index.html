@@ -39,7 +39,7 @@
 
   <!-- ══ 模块冲突检测（v2.8；无冲突时整块隐藏）══ -->
   <section class="card cbox" id="conflict-box" style="display:none">
-    <p class="cbox-title">检测到其他温控模块</p>
+    <p class="cbox-title">检测到其他温控模块 <span class="ccount" id="conflict-count"></span></p>
     <ul class="clist" id="conflict-list"></ul>
     <p class="cbox-tip">温控类模块会争抢同一批资源（emul_temp / horae 服务 / shell-temp /
       sys_thermal* XML / cooling_device）。装多个不会叠加效果，只会互相覆盖 ——
@@ -480,17 +480,36 @@ function renderConflicts(d) {
   if (!box || !list) return;
   var items = (d && d.items) ? d.items : [];
   if (!items.length) { box.style.display = 'none'; list.innerHTML = ''; return; }
+  /* v2.14.2 紧凑展示：默认每项只占一行（风险徽章 + 名称 + 版本），ID 与长备注收进
+     点击展开区 —— 4 个冲突模块的完整备注原来要占一屏多，折叠后一屏内看完。
+     仅 high 级别默认展开：最需要处理的信息不藏在点击后面。 */
+  var RISK = { high: '高', medium: '中', low: '低' };
   var h = '';
   items.forEach(function(it){
-    h += '<li class="' + (it.risk === 'high' ? 'hi' : 'mid') + '">'
+    var hi = it.risk === 'high';
+    h += '<li class="' + (hi ? 'hi' : 'mid') + (hi ? ' open' : '') + '">'
+       + '<div class="chead">'
+       + '<span class="crisk ' + (hi ? 'r-hi' : (it.risk === 'low' ? 'r-low' : 'r-mid')) + '">'
+       + esc(RISK[it.risk] || '中') + '</span>'
        + '<span class="cn">' + esc(it.name || it.id) + '</span>'
        + '<span class="cv">' + esc(it.version || '') + '</span>'
+       + '<span class="carrow">▾</span></div>'
+       + '<div class="cdetail">'
        + '<span class="cid">' + esc(it.id) + '</span>'
-       + '<p class="cnote">' + esc(it.note || '') + '</p></li>';
+       + '<p class="cnote">' + esc(it.note || '') + '</p></div></li>';
   });
   list.innerHTML = h;
+  var cnt = $('conflict-count');
+  if (cnt) cnt.textContent = '共 ' + items.length + ' 项 · 点条目看详情';
   box.style.display = '';
 }
+
+/* 点击标题行展开/收起详情（事件委托：列表内容每次渲染都整体重建，绑在 ul 上一次即可） */
+$('conflict-list').addEventListener('click', function(e){
+  var t = e.target, head = null;
+  while (t && t !== this) { if (t.classList && t.classList.contains('chead')) { head = t; break; } t = t.parentNode; }
+  if (head) head.parentNode.classList.toggle('open');
+});
 
 function loadConflicts(){
   apiConflicts().then(renderConflicts).catch(function(){

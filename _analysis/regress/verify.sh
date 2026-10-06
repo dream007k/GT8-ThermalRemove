@@ -741,8 +741,8 @@ cp "$MD/mode.conf" "$W/mode.conf"; cp "$MD/spoof.conf" "$W/spoof.conf"
 sec "K. 结构与静态一致性"
 _prop_v=$(grep -m1 '^version=' "$MD/module.prop" | cut -d= -f2)
 _prop_c=$(grep -m1 '^versionCode=' "$MD/module.prop" | cut -d= -f2)
-eq "K01 version=v2.14.1" "$_prop_v" "v2.14.1"
-eq "K02 versionCode=70" "$_prop_c" "70"
+eq "K01 version=v2.14.2" "$_prop_v" "v2.14.2"
+eq "K02 versionCode=71" "$_prop_c" "71"
 eq "K03 module id 未变" "$(grep -m1 '^id=' "$MD/module.prop" | cut -d= -f2)" "realme-gt8-sukisu-thermal-remove"
 _syn=0
 for f in "$MD"/*.sh "$MD"/common/*.sh "$MD"/webroot/cgi-bin/*.sh; do
@@ -780,6 +780,12 @@ eq "K22 diagpack 生成 07-fuse.txt" "$(grep -c '07-fuse.txt' "$MD/action.sh")" 
 eq "K23 README 清单含 07-fuse" "$(grep -c '07-fuse.txt.*温度保险丝状态' "$MD/action.sh")" "1"
 eq "K24 降级列表含 07-fuse" "$(grep -c '07-fuse.txt; do' "$MD/action.sh")" "1"
 eq "K25 action fuse 复用 fuse_report" "$(grep -c '^        fuse_report$' "$MD/action.sh")" "2"
+# v2.14.2 冲突卡片紧凑展示
+eq "K26 前端有折叠头 chead" "$(grep -c 'class="chead"' "$MD/webroot/index.html")" "1"
+eq "K27 有折叠区 cdetail" "$(grep -c 'class="cdetail"' "$MD/webroot/index.html")" "1"
+eq "K28 high 默认展开" "$(grep -c "hi ? ' open' : ''" "$MD/webroot/index.html")" "1"
+eq "K29 点击展开（事件委托 toggle open）" "$(grep -c "classList.toggle('open')" "$MD/webroot/index.html")" "1"
+eq "K30 CSS 有风险徽章三色" "$(grep -c 'r-hi\|r-mid\|r-low' "$MD/webroot/style.css")" "3"
 
 # ══ 20. v2.14.0 A3：functions.sh 按功能域拆分 ═══════════════════
 sec "Q. 拆分完整性"
