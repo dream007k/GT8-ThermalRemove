@@ -761,8 +761,8 @@ cp "$MD/mode.conf" "$W/mode.conf"; cp "$MD/spoof.conf" "$W/spoof.conf"
 sec "K. 结构与静态一致性"
 _prop_v=$(grep -m1 '^version=' "$MD/module.prop" | cut -d= -f2)
 _prop_c=$(grep -m1 '^versionCode=' "$MD/module.prop" | cut -d= -f2)
-eq "K01 version=v2.15.0" "$_prop_v" "v2.15.0"
-eq "K02 versionCode=73" "$_prop_c" "73"
+eq "K01 version=v2.15.1" "$_prop_v" "v2.15.1"
+eq "K02 versionCode=74" "$_prop_c" "74"
 eq "K03 module id 未变" "$(grep -m1 '^id=' "$MD/module.prop" | cut -d= -f2)" "realme-gt8-sukisu-thermal-remove"
 _syn=0
 for f in "$MD"/*.sh "$MD"/common/*.sh "$MD"/webroot/cgi-bin/*.sh; do
@@ -836,6 +836,14 @@ eq "R07 functions source presets.sh" "$(grep -c 'common/presets.sh' "$MD/common/
 eq "R08 命中游戏切 game 档" "$(grep -c 'preset_apply game' "$MD/common/state.sh")" "1"
 eq "R09 退出恢复（3 次防抖）" "$(grep -c '_AUTO_GAME_LEAVE.*ge 3' "$MD/common/state.sh")" "1"
 eq "R10 mode.conf 有 AUTO_GAME_PRESET 注释" "$(grep -c '^AUTO_GAME_PRESET=0' "$MD/mode.conf")" "1"
+
+# ══ 22. v2.15.1：dump_temp 温度显示一位小数 ═════════════════════
+sec "S. dump_temp 显示"
+echo 3300 > "$TZ/thermal_zone1/temp"
+_dt=$(dump_temp 2>/dev/null | grep 'battery')
+eq "S01 dump_temp 3.3°C 而非 3300°C" "$(printf '%s' "$_dt" | grep -c '3\.3°C')" "1"
+echo 45000 > "$TZ/thermal_zone1/temp"
+
 
 
 

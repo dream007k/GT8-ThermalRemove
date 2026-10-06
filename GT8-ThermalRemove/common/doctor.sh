@@ -140,7 +140,10 @@ dump_temp() {
         _t="";  read -r _t  < "$_z/temp" 2>/dev/null
         _ty=""; read -r _ty < "$_z/type" 2>/dev/null
         case "$_t" in ''|*[!0-9-]*) continue ;; esac
-        if [ "${#_t}" -gt 4 ]; then _d=$((_t / 1000)); else _d="$_t"; fi
+        # v2.15.1：毫摄氏度 → 摄氏度，统一保留一位小数（与 fuse_report 一致）。
+        # 原实现只在值 >4 位（≥10°C）时除 1000、否则原样显示 —— 于是 usb 这类
+        # 真实温度 3300 毫摄氏度（3.3°C）的非欺骗温感被显示成「3300°C」（SPOOF_BATT=0 时暴露）。
+        _d="$((_t / 1000)).$((_t % 1000 / 100))"
         _m=""
         case "$_dt_sl" in *"$_z|"*) _m="（欺骗）" ;; esac
         echo "  ${_ty:-zone}: ${_d}°C$_m"
