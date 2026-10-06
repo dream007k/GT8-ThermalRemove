@@ -601,6 +601,20 @@ eq "L30 fuse_report 含触发记录节" "$(printf '%s' "$_rpt" | grep -c '保险
 eq "L31 fuse_report 含安全模式节" "$(printf '%s' "$_rpt" | grep -c '安全模式 / 开机自救')" "1"
 : > "$SPOOF_LIST"; apply_spoof > /dev/null   # 恢复欺骗态，供后续 M 段用
 
+# L32：电池路选型 —— usb 先于 battery 时仍应选 battery（v2.14.3 修复）
+# thermal_zone00 字典序介于 zone0(soc) 与 zone1(battery) 之间，模拟 usb 先于 battery。
+mkdir -p "$TZ/thermal_zone00"
+printf 'usb\n' > "$TZ/thermal_zone00/type"
+echo 30000 > "$TZ/thermal_zone00/temp"; echo 0 > "$TZ/thermal_zone00/emul_temp"
+FUSE_ENABLE=1; FUSE_TEMP_BATT=45000
+echo 30000 > "$TZ/thermal_zone0/temp"; echo 30000 > "$TZ/thermal_zone2/temp"   # soc/skin 常温
+echo 50000 > "$TZ/thermal_zone1/temp"   # battery 高温 50°C
+# 选到 usb(30000<45000) → 不触发(0)；选到 battery(50000>45000) → 触发(1)
+fuse_sample_check; eq "L32 电池路选 battery 而非 usb" "$?" "1"
+: > "$FUSE_LOG"; _FUSE_TICKS=0; _FUSE_TRIPS=0
+rmx -rf "$TZ/thermal_zone00" 2>/dev/null
+echo 30000 > "$TZ/thermal_zone1/temp"
+
 # ══ 13. v2.12.0 安全模式与开机自救（U3）══════════════════════
 sec "M. 安全模式与开机自救"
 : > "$BOOT_TOKEN"; : > "$SAFE_MODE_MARK"   # 不删文件，直接清内容（判据是"非空"）
@@ -741,8 +755,8 @@ cp "$MD/mode.conf" "$W/mode.conf"; cp "$MD/spoof.conf" "$W/spoof.conf"
 sec "K. 结构与静态一致性"
 _prop_v=$(grep -m1 '^version=' "$MD/module.prop" | cut -d= -f2)
 _prop_c=$(grep -m1 '^versionCode=' "$MD/module.prop" | cut -d= -f2)
-eq "K01 version=v2.14.2" "$_prop_v" "v2.14.2"
-eq "K02 versionCode=71" "$_prop_c" "71"
+eq "K01 version=v2.14.3" "$_prop_v" "v2.14.3"
+eq "K02 versionCode=72" "$_prop_c" "72"
 eq "K03 module id 未变" "$(grep -m1 '^id=' "$MD/module.prop" | cut -d= -f2)" "realme-gt8-sukisu-thermal-remove"
 _syn=0
 for f in "$MD"/*.sh "$MD"/common/*.sh "$MD"/webroot/cgi-bin/*.sh; do

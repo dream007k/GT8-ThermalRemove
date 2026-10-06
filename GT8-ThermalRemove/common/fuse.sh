@@ -65,9 +65,13 @@ fuse_sample_check() {
         [ -n "$_fty" ] || continue
         is_blacklisted "$_fty" && continue
         case "$_fty" in
-            *batt*|*battery*|*usb*)         [ -z "$_fsz_batt" ] && _fsz_batt=$_fz ;;
-            *soc*|*cpu*|*ap*|*gpu*|*tsens*) [ -z "$_fsz_soc" ]  && _fsz_soc=$_fz  ;;
-            *skin*|*shell*|*case*|*frame*)  [ -z "$_fsz_skin" ] && _fsz_skin=$_fz ;;
+            # v2.14.3：电池路优先 battery/batt（真实电池温度）；usb 只在无 battery 时兜底 ——
+            # 此前把 usb 与 battery 并列「取首个」，而遍历顺序 usb 先于 battery，
+            # 真机上选到 usb（读 3.1°C 异常低温），电池过温保护因此永远不触发。
+            *batt*|*battery*)                 _fsz_batt=$_fz ;;
+            *usb*)                            [ -z "$_fsz_batt" ] && _fsz_batt=$_fz ;;
+            *soc*|*cpu*|*ap*|*gpu*|*tsens*)  [ -z "$_fsz_soc" ]  && _fsz_soc=$_fz  ;;
+            *skin*|*shell*|*case*|*frame*)   [ -z "$_fsz_skin" ] && _fsz_skin=$_fz ;;
         esac
     done
     _fuse_probe_one "$_fsz_batt" "${FUSE_TEMP_BATT:-45000}" 电池 || return 1
@@ -174,9 +178,10 @@ fuse_report() {
         [ -n "$_fr_ty" ] || continue
         is_blacklisted "$_fr_ty" && continue
         case "$_fr_ty" in
-            *batt*|*battery*|*usb*)         [ -z "$_fr_b" ] && _fr_b=$_fr_z ;;
-            *soc*|*cpu*|*ap*|*gpu*|*tsens*) [ -z "$_fr_s" ] && _fr_s=$_fr_z ;;
-            *skin*|*shell*|*case*|*frame*)  [ -z "$_fr_k" ] && _fr_k=$_fr_z ;;
+            *batt*|*battery*)                 _fr_b=$_fr_z ;;
+            *usb*)                            [ -z "$_fr_b" ] && _fr_b=$_fr_z ;;
+            *soc*|*cpu*|*ap*|*gpu*|*tsens*)  [ -z "$_fr_s" ] && _fr_s=$_fr_z ;;
+            *skin*|*shell*|*case*|*frame*)   [ -z "$_fr_k" ] && _fr_k=$_fr_z ;;
         esac
     done
     _fuse_show_line "$_fr_b" "电池" "${FUSE_TEMP_BATT:-45000}"
