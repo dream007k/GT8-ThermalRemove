@@ -835,10 +835,34 @@ function collectPairs(){
 }
 
 function save(){
-  apiSet(collectPairs()).then(function(d){
+  var pairs = collectPairs();
+  apiSet(pairs).then(function(d){
     msg(d.message || '已保存', !!d.success);
+    if (!d || !d.success) return;
     setTimeout(function(){ loadStatus(); loadTemps(); }, 1500);
+    /* v2.13.0 U2：写回执 —— 保存 6.5s 后回拉状态，比对本次写入是否真的生效 */
+    setTimeout(function(){ verifyWriteBack(pairs); }, 6500);
   }).catch(transportError('保存'));
+}
+
+/* v2.13.0 U2：写回执 —— 只比对 status 里暴露的键；进阶键（MAINT_SECONDS 等）
+ * 不在状态面板，跳过而不误报。值统一转字符串比对（status 里都是字符串）。 */
+function verifyWriteBack(pairs){
+  apiStatus().then(function(s){
+    if (!s || typeof s !== 'object') return;
+    var missed = [], checked = 0, skipped = 0;
+    pairs.forEach(function(p){
+      var k = p[0];
+      if (!(k in s)) { skipped++; return; }
+      checked++;
+      if (String(s[k]) !== String(p[1])) missed.push(k);
+    });
+    if (missed.length === 0) {
+      msg('✔ 已生效：本次 ' + checked + ' 项均已写入' + (skipped ? '（' + skipped + ' 项不在状态面板，属正常）' : ''), true);
+    } else {
+      msg('⚠ ' + missed.length + ' 项未生效（' + missed.join(', ') + '）：可能被其他模块/服务覆盖，可到「冲突检测」排查', false);
+    }
+  }).catch(function(){ /* 回拉失败静默，不打扰 */ });
 }
 
 /* 磁贴点击 = 立即切换该开关 */

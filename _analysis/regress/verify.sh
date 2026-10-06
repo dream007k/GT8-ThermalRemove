@@ -665,8 +665,8 @@ cp "$MD/mode.conf" "$W/mode.conf"; cp "$MD/spoof.conf" "$W/spoof.conf"
 sec "K. 结构与静态一致性"
 _prop_v=$(grep -m1 '^version=' "$MD/module.prop" | cut -d= -f2)
 _prop_c=$(grep -m1 '^versionCode=' "$MD/module.prop" | cut -d= -f2)
-eq "K01 version=v2.13.0" "$_prop_v" "v2.13.0"
-eq "K02 versionCode=65" "$_prop_c" "65"
+eq "K01 version=v2.13.1" "$_prop_v" "v2.13.1"
+eq "K02 versionCode=66" "$_prop_c" "66"
 eq "K03 module id 未变" "$(grep -m1 '^id=' "$MD/module.prop" | cut -d= -f2)" "realme-gt8-sukisu-thermal-remove"
 _syn=0
 for f in "$MD"/*.sh "$MD"/common/*.sh "$MD"/webroot/cgi-bin/*.sh; do
@@ -689,6 +689,10 @@ for f in README.md module.prop mode.conf spoof.conf action.sh service.sh customi
          common/functions.sh common/presets.sh common/conflicts.sh webroot/index.html webroot/cgi-bin/api.sh; do
     [ -f "$MD/$f" ] && ok || bad "K15 交付文件存在: $f" "missing" "present"
 done
+# v2.13.1 U2 写回执（前端静态断言）
+eq "K16 前端有 verifyWriteBack" "$(grep -c 'function verifyWriteBack' "$MD/webroot/index.html")" "1"
+eq "K17 save 调用写回执" "$(grep -c 'verifyWriteBack(pairs);' "$MD/webroot/index.html")" "1"
+eq "K18 回执只比对暴露键" "$(grep -c 'k in s' "$MD/webroot/index.html")" "1"
 
 # ══ 13. 收尾 ═════════════════════════════════════════════════
 # 假 sysfs 树 / 假模块 / 运行目录全部集中在本 run 目录下（$W），
