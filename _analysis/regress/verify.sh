@@ -585,14 +585,15 @@ FUSE_ENABLE=1
 echo 30000 > "$TZ/thermal_zone1/temp"
 
 # v2.13.3：fuse_report / _fuse_read_one（诊断包 07-fuse 与 action fuse 复用）
-# 核心验证「原值恢复」：欺骗态写回伪装值、未欺骗态写回 0，绝不误开欺骗。
+# 核心验证：写 0 采真值后，用 zone_target_into 算伪装值写回（本内核 emul_temp 回读恒空，
+# 不能靠回读原值恢复 —— 会误判为 0、写回 0 从而破坏欺骗）。
 for _z in "$TZ"/thermal_zone*; do echo 30000 > "$_z/temp" 2>/dev/null; done
 : > "$SPOOF_LIST"; apply_spoof > /dev/null
 _fuse_read_one "$TZ/thermal_zone1"; eq "L24 欺骗态读到真值" "$_FR_VAL" "30000"
-eq "L25 欺骗态写回原伪装值" "$(cat "$TZ/thermal_zone1/emul_temp")" "33300"
+eq "L25 写回 zone_target_into 伪装值" "$(cat "$TZ/thermal_zone1/emul_temp")" "33300"
 echo 0 > "$TZ/thermal_zone1/emul_temp"
 _fuse_read_one "$TZ/thermal_zone1"; eq "L26 未欺骗态读到真值" "$_FR_VAL" "30000"
-eq "L27 未欺骗态写回 0（不误开欺骗）" "$(cat "$TZ/thermal_zone1/emul_temp")" "0"
+eq "L27 写回伪装值（不再依赖回读，未欺骗态也补上欺骗）" "$(cat "$TZ/thermal_zone1/emul_temp")" "33300"
 _rpt=$(fuse_report 2>/dev/null)
 eq "L28 fuse_report 标题" "$(printf '%s' "$_rpt" | grep -c '温度保险丝')" "1"
 eq "L29 fuse_report 含三路真实温度节" "$(printf '%s' "$_rpt" | grep -c '三路真实温度')" "1"
@@ -740,8 +741,8 @@ cp "$MD/mode.conf" "$W/mode.conf"; cp "$MD/spoof.conf" "$W/spoof.conf"
 sec "K. 结构与静态一致性"
 _prop_v=$(grep -m1 '^version=' "$MD/module.prop" | cut -d= -f2)
 _prop_c=$(grep -m1 '^versionCode=' "$MD/module.prop" | cut -d= -f2)
-eq "K01 version=v2.14.0" "$_prop_v" "v2.14.0"
-eq "K02 versionCode=69" "$_prop_c" "69"
+eq "K01 version=v2.14.1" "$_prop_v" "v2.14.1"
+eq "K02 versionCode=70" "$_prop_c" "70"
 eq "K03 module id 未变" "$(grep -m1 '^id=' "$MD/module.prop" | cut -d= -f2)" "realme-gt8-sukisu-thermal-remove"
 _syn=0
 for f in "$MD"/*.sh "$MD"/common/*.sh "$MD"/webroot/cgi-bin/*.sh; do
@@ -774,7 +775,7 @@ eq "K18 回执只比对暴露键" "$(grep -c 'k in s' "$MD/webroot/index.html")"
 # v2.13.3 诊断包 07-fuse 节（静态断言）
 eq "K19 fuse 有 fuse_report" "$(grep -c '^fuse_report()' "$MD/common/fuse.sh")" "1"
 eq "K20 fuse 有 _fuse_read_one" "$(grep -c '^_fuse_read_one()' "$MD/common/fuse.sh")" "1"
-eq "K21 _fuse_read_one 用原值恢复" "$(grep -c 'echo.*_fr_orig.*emul_temp' "$MD/common/fuse.sh")" "1"
+eq "K21 _fuse_read_one 不再回读原值" "$(grep -c '_fr_orig' "$MD/common/fuse.sh")" "0"
 eq "K22 diagpack 生成 07-fuse.txt" "$(grep -c '07-fuse.txt' "$MD/action.sh")" "3"
 eq "K23 README 清单含 07-fuse" "$(grep -c '07-fuse.txt.*温度保险丝状态' "$MD/action.sh")" "1"
 eq "K24 降级列表含 07-fuse" "$(grep -c '07-fuse.txt; do' "$MD/action.sh")" "1"

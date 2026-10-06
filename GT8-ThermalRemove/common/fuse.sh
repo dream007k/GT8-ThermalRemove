@@ -114,25 +114,26 @@ fuse_trips() {
     printf '%s' "$_ft_n"
 }
 
-# 诊断用：读单路真实温度（只读展示，不触发）。与 _fuse_probe_one 的差别：
-#   · 不比较阈值、不触发动作；
-#   · 用「原值恢复」而非「写回伪装值」—— 这样无论当前是否处于欺骗态都安全：
-#     欺骗态写回原伪装值、未欺骗态写回 0，绝不会把未欺骗的温感意外开启欺骗。
+# 诊断用：读单路真实温度（只读展示，不触发）。与 _fuse_probe_one 的差别只有
+#   「不比较阈值、不触发动作」。写回伪装值用 zone_target_into（而非回读 emul_temp
+#   原值）—— 本内核 emul_temp 回读恒为空，回读原值会误判为 0、写回 0 从而撤销欺骗。
 # $1=温感目录；读到可信真值返回 0 并写 _FR_VAL，否则返回 1。
 _fuse_read_one() {
     _fr_d="$1"; _FR_VAL=""
     [ -n "$_fr_d" ] && [ -e "$_fr_d/emul_temp" ] && [ -e "$_fr_d/temp" ] || return 1
-    _fr_orig=""; read -r _fr_orig < "$_fr_d/emul_temp" 2>/dev/null
-    case "$_fr_orig" in ''|*[!0-9-]*) _fr_orig=0 ;; esac
+    _fr_ty=""; read -r _fr_ty < "$_fr_d/type" 2>/dev/null
+    [ -n "$_fr_ty" ] || _fr_ty="${_fr_d##*/}"
+    zone_target_into "$_fr_ty"; _fr_spoof="$_ZTV"
+    # 短暂关仿真读真值；写不进去就如实返回失败（不冒充）
     echo 0 > "$_fr_d/emul_temp" 2>/dev/null || return 1
-    echo "$_fr_d|$_fr_orig" >> "$REAL_ZERO_MARK" 2>/dev/null
+    echo "$_fr_d|$_fr_spoof" >> "$REAL_ZERO_MARK" 2>/dev/null
     _fuse_msleep "${FUSE_DELAY_MS:-80}"
     _fr_r=""; read -r _fr_r < "$_fr_d/temp" 2>/dev/null
-    echo "$_fr_orig" > "$_fr_d/emul_temp" 2>/dev/null
+    # 立刻写回伪装值（zone_target_into，与 _fuse_probe_one 一致）—— 顺序不能反
+    echo "$_fr_spoof" > "$_fr_d/emul_temp" 2>/dev/null
     : > "$REAL_ZERO_MARK" 2>/dev/null
     case "$_fr_r" in ''|*[!0-9-]*) return 1 ;; esac
-    # 原值非 0 = 处于欺骗态：读到的必须与伪装值不同才可信（内核未刷新会读到旧伪装值）
-    [ "$_fr_orig" != "0" ] && [ "$_fr_r" = "$_fr_orig" ] && return 1
+    [ "$_fr_r" = "$_fr_spoof" ] && return 1   # 读到伪装值 = 内核未刷新，不可信
     _FR_VAL="$_fr_r"
     return 0
 }
@@ -181,6 +182,18 @@ fuse_report() {
     _fuse_show_line "$_fr_b" "电池" "${FUSE_TEMP_BATT:-45000}"
     _fuse_show_line "$_fr_s" "SoC " "${FUSE_TEMP_SOC:-80000}"
     _fuse_show_line "$_fr_k" "外壳" "${FUSE_TEMP_SKIN:-46000}"
+    # v2.14.1：探测结束按记账全量重放，确保欺骗恢复 —— 本内核写 emul_temp=0 后
+    # 写回伪装值可能失败（Permission denied），若不兜底会留下「欺骗被撤销」的窗口，
+    # 要等 service.sh 下一个维护周期（≤120s）才恢复。
+    if [ -s "$SPOOF_LIST" ]; then
+        _fr_rep=0
+        while IFS='|' read -r _fr_d2 _fr_v2; do
+            [ -n "$_fr_d2" ] && [ -e "$_fr_d2/emul_temp" ] || continue
+            echo "$_fr_v2" > "$_fr_d2/emul_temp" 2>/dev/null && _fr_rep=$((_fr_rep + 1))
+        done < "$SPOOF_LIST"
+        : > "$REAL_ZERO_MARK" 2>/dev/null
+        echo "  （探测后已按记账重放 $_fr_rep 个温感，恢复欺骗）"
+    fi
     echo
     echo "=== 保险丝触发记录（fuse.log）==="
     if [ -s "$FUSE_LOG" ]; then
