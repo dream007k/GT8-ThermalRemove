@@ -251,6 +251,13 @@ build_diagpack() {
         echo "(日志为空或不存在: $LOG_FILE)" > "$_S/06-log.txt"
     fi
 
+    # ── 07 保险丝状态与三路真实温度（v2.13.3）──
+    # 之前诊断包没有这一节，导致「保险丝采样是否在跑 / 真实温度离阈值多远」
+    # 完全不可见（fuse.log 只在触发时才存在）。本节补上：纯只读 + 短暂采真值。
+    {
+        fuse_report
+    } > "$_S/07-fuse.txt" 2>&1
+
     # ── 00 README + manifest ──
     {
         echo "GT8 ThermalRemove · 诊断包"
@@ -266,6 +273,7 @@ build_diagpack() {
         echo "  04-thermal.txt   全部温感读数 + 冷却设备 + 关键 sysfs"
         echo "  05-conflicts.txt 模块冲突自检 + 已装模块清单"
         echo "  06-log.txt       运行日志（默认尾部 $DIAG_LOG_LINES 行）"
+        echo "  07-fuse.txt      温度保险丝状态 + 三路真实温度 + 触发记录"
         echo
         echo "说明：本包仅供排查使用，不含任何账号/隐私数据。"
         echo "      如需完整日志，可在 mode.conf 设 DIAG_LOG_LINES=0 后重新导出。"
@@ -292,7 +300,7 @@ build_diagpack() {
         : > "$_out" 2>/dev/null
         for _f in "$_S"/00-README.txt "$_S"/01-device.txt "$_S"/02-config.txt \
                   "$_S"/03-runtime.txt "$_S"/04-thermal.txt "$_S"/05-conflicts.txt \
-                  "$_S"/06-log.txt; do
+                  "$_S"/06-log.txt "$_S"/07-fuse.txt; do
             [ -f "$_f" ] || continue
             {
                 echo
@@ -328,19 +336,10 @@ case "$1" in
         echo "安全模式：MODE=off，欺骗已撤销，sysfs 已还原"
         ;;
     # v2.12.0：温度保险丝状态
+    # v2.13.3：统一走 fuse_report（含三路真实温度 + 触发记录 + 安全模式）
     fuse)
         load_conf
-        echo "=== 温度保险丝 ==="
-        echo "开关           : $([ "$FUSE_ENABLE" = "1" ] && echo 开启 || echo 关闭)"
-        echo "阈值（毫摄氏度）: 电池/${FUSE_TEMP_BATT} SoC/${FUSE_TEMP_SOC} 外壳/${FUSE_TEMP_SKIN}  (0 = 关闭该路)"
-        echo "冷却时长       : ${FUSE_COOLDOWN}s（触发后在此期间不再重新移除温控）"
-        echo "累计触发次数   : $(fuse_trips)"
-        if [ -s "$FUSE_LOG" ]; then
-            echo "最近记录       :"
-            tail -n 5 "$FUSE_LOG" | sed 's/^/  /'
-        else
-            echo "最近记录       : （无，说明从未触发）"
-        fi
+        fuse_report
         ;;
     # v2.13.0：一键体检 —— 环境是否支持 / 是否生效 / 有哪些风险，一条命令出报告
     doctor)

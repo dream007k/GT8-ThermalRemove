@@ -571,6 +571,22 @@ eq "L23 开关关闭时不触发" "$(wc -l < "$FUSE_LOG" | tr -d ' ')" "0"
 FUSE_ENABLE=1
 echo 30000 > "$TZ/thermal_zone1/temp"
 
+# v2.13.3：fuse_report / _fuse_read_one（诊断包 07-fuse 与 action fuse 复用）
+# 核心验证「原值恢复」：欺骗态写回伪装值、未欺骗态写回 0，绝不误开欺骗。
+for _z in "$TZ"/thermal_zone*; do echo 30000 > "$_z/temp" 2>/dev/null; done
+: > "$SPOOF_LIST"; apply_spoof > /dev/null
+_fuse_read_one "$TZ/thermal_zone1"; eq "L24 欺骗态读到真值" "$_FR_VAL" "30000"
+eq "L25 欺骗态写回原伪装值" "$(cat "$TZ/thermal_zone1/emul_temp")" "33300"
+echo 0 > "$TZ/thermal_zone1/emul_temp"
+_fuse_read_one "$TZ/thermal_zone1"; eq "L26 未欺骗态读到真值" "$_FR_VAL" "30000"
+eq "L27 未欺骗态写回 0（不误开欺骗）" "$(cat "$TZ/thermal_zone1/emul_temp")" "0"
+_rpt=$(fuse_report 2>/dev/null)
+eq "L28 fuse_report 标题" "$(printf '%s' "$_rpt" | grep -c '温度保险丝')" "1"
+eq "L29 fuse_report 含三路真实温度节" "$(printf '%s' "$_rpt" | grep -c '三路真实温度')" "1"
+eq "L30 fuse_report 含触发记录节" "$(printf '%s' "$_rpt" | grep -c '保险丝触发记录')" "1"
+eq "L31 fuse_report 含安全模式节" "$(printf '%s' "$_rpt" | grep -c '安全模式 / 开机自救')" "1"
+: > "$SPOOF_LIST"; apply_spoof > /dev/null   # 恢复欺骗态，供后续 M 段用
+
 # ══ 13. v2.12.0 安全模式与开机自救（U3）══════════════════════
 sec "M. 安全模式与开机自救"
 : > "$BOOT_TOKEN"; : > "$SAFE_MODE_MARK"   # 不删文件，直接清内容（判据是"非空"）
@@ -711,8 +727,8 @@ cp "$MD/mode.conf" "$W/mode.conf"; cp "$MD/spoof.conf" "$W/spoof.conf"
 sec "K. 结构与静态一致性"
 _prop_v=$(grep -m1 '^version=' "$MD/module.prop" | cut -d= -f2)
 _prop_c=$(grep -m1 '^versionCode=' "$MD/module.prop" | cut -d= -f2)
-eq "K01 version=v2.13.2" "$_prop_v" "v2.13.2"
-eq "K02 versionCode=67" "$_prop_c" "67"
+eq "K01 version=v2.13.3" "$_prop_v" "v2.13.3"
+eq "K02 versionCode=68" "$_prop_c" "68"
 eq "K03 module id 未变" "$(grep -m1 '^id=' "$MD/module.prop" | cut -d= -f2)" "realme-gt8-sukisu-thermal-remove"
 _syn=0
 for f in "$MD"/*.sh "$MD"/common/*.sh "$MD"/webroot/cgi-bin/*.sh; do
@@ -739,6 +755,14 @@ done
 eq "K16 前端有 verifyWriteBack" "$(grep -c 'function verifyWriteBack' "$MD/webroot/index.html")" "1"
 eq "K17 save 调用写回执" "$(grep -c 'verifyWriteBack(pairs);' "$MD/webroot/index.html")" "1"
 eq "K18 回执只比对暴露键" "$(grep -c 'k in s' "$MD/webroot/index.html")" "1"
+# v2.13.3 诊断包 07-fuse 节（静态断言）
+eq "K19 functions 有 fuse_report" "$(grep -c '^fuse_report()' "$MD/common/functions.sh")" "1"
+eq "K20 functions 有 _fuse_read_one" "$(grep -c '^_fuse_read_one()' "$MD/common/functions.sh")" "1"
+eq "K21 _fuse_read_one 用原值恢复" "$(grep -c 'echo.*_fr_orig.*emul_temp' "$MD/common/functions.sh")" "1"
+eq "K22 diagpack 生成 07-fuse.txt" "$(grep -c '07-fuse.txt' "$MD/action.sh")" "3"
+eq "K23 README 清单含 07-fuse" "$(grep -c '07-fuse.txt.*温度保险丝状态' "$MD/action.sh")" "1"
+eq "K24 降级列表含 07-fuse" "$(grep -c '07-fuse.txt; do' "$MD/action.sh")" "1"
+eq "K25 action fuse 复用 fuse_report" "$(grep -c '^        fuse_report$' "$MD/action.sh")" "2"
 
 # ══ 13. 收尾 ═════════════════════════════════════════════════
 # 假 sysfs 树 / 假模块 / 运行目录全部集中在本 run 目录下（$W），

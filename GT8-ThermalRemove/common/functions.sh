@@ -1494,6 +1494,91 @@ fuse_trips() {
     printf '%s' "$_ft_n"
 }
 
+# 诊断用：读单路真实温度（只读展示，不触发）。与 _fuse_probe_one 的差别：
+#   · 不比较阈值、不触发动作；
+#   · 用「原值恢复」而非「写回伪装值」—— 这样无论当前是否处于欺骗态都安全：
+#     欺骗态写回原伪装值、未欺骗态写回 0，绝不会把未欺骗的温感意外开启欺骗。
+# $1=温感目录；读到可信真值返回 0 并写 _FR_VAL，否则返回 1。
+_fuse_read_one() {
+    _fr_d="$1"; _FR_VAL=""
+    [ -n "$_fr_d" ] && [ -e "$_fr_d/emul_temp" ] && [ -e "$_fr_d/temp" ] || return 1
+    _fr_orig=""; read -r _fr_orig < "$_fr_d/emul_temp" 2>/dev/null
+    case "$_fr_orig" in ''|*[!0-9-]*) _fr_orig=0 ;; esac
+    echo 0 > "$_fr_d/emul_temp" 2>/dev/null || return 1
+    echo "$_fr_d|$_fr_orig" >> "$REAL_ZERO_MARK" 2>/dev/null
+    _fuse_msleep "${FUSE_DELAY_MS:-80}"
+    _fr_r=""; read -r _fr_r < "$_fr_d/temp" 2>/dev/null
+    echo "$_fr_orig" > "$_fr_d/emul_temp" 2>/dev/null
+    : > "$REAL_ZERO_MARK" 2>/dev/null
+    case "$_fr_r" in ''|*[!0-9-]*) return 1 ;; esac
+    # 原值非 0 = 处于欺骗态：读到的必须与伪装值不同才可信（内核未刷新会读到旧伪装值）
+    [ "$_fr_orig" != "0" ] && [ "$_fr_r" = "$_fr_orig" ] && return 1
+    _FR_VAL="$_fr_r"
+    return 0
+}
+
+# 诊断用：展示一路真实温度（配合 _fuse_read_one）
+_fuse_show_line() {
+    _fl_d="$1"; _fl_name="$2"; _fl_th="$3"
+    _fl_ty=""; [ -n "$_fl_d" ] && read -r _fl_ty < "$_fl_d/type" 2>/dev/null
+    [ -n "$_fl_ty" ] || _fl_ty="${_fl_d##*/}"
+    if _fuse_read_one "$_fl_d"; then
+        _fl_c=$(( _FR_VAL / 100 ))
+        _fl_ci=$(( _fl_c / 10 )); _fl_cf=$(( _fl_c % 10 ))
+        _fl_flag=""
+        [ "$_fl_th" != "0" ] && [ "$_FR_VAL" -gt "$_fl_th" ] 2>/dev/null && _fl_flag="  ⚠ 已超阈值"
+        echo "  ${_fl_name}  (${_fl_ty:-未命中}) = ${_FR_VAL} 毫摄氏度 (${_fl_ci}.${_fl_cf}°C)${_fl_flag}"
+    else
+        echo "  ${_fl_name}  (${_fl_ty:-未命中}) = --（读不到可信真值：该路不支持/未欺骗/内核不刷新）"
+    fi
+}
+
+# 诊断用：保险丝状态 + 三路真实温度 + 触发记录 + 安全模式（纯只读，不触发）。
+# 供 `sh action.sh fuse` 与诊断包 07-fuse.txt 复用。
+# 约定：调用前需 load_conf（读 FUSE_* / BOOT_FAIL_LIMIT 变量），与 doctor_report 一致；
+#       FUSE_DELAY_MS 可经环境变量覆盖（测试设 0 跳过采样等待）。
+fuse_report() {
+    echo "=== 温度保险丝（FUSE）==="
+    echo "开关           : $([ "$FUSE_ENABLE" = "1" ] && echo 开启 || echo 关闭)"
+    echo "阈值（毫摄氏度）: 电池/${FUSE_TEMP_BATT:-45000}  SoC/${FUSE_TEMP_SOC:-80000}  外壳/${FUSE_TEMP_SKIN:-46000}   (0=关闭该路)"
+    echo "冷却时长       : ${FUSE_COOLDOWN:-120}s（触发后此期间不再重新移除温控）"
+    echo "采样等待       : ${FUSE_DELAY_MS:-80}ms（写 emul_temp=0 后等多久再读真值）"
+    echo "累计触发次数   : $(fuse_trips)"
+    echo
+    echo "=== 三路真实温度（短暂写 emul_temp=0 采真值后原样写回，无副作用）==="
+    _fr_b=""; _fr_s=""; _fr_k=""
+    for _fr_z in /sys/class/thermal/thermal_zone*; do
+        [ -e "$_fr_z/emul_temp" ] && [ -e "$_fr_z/temp" ] || continue
+        _fr_ty=""; read -r _fr_ty < "$_fr_z/type" 2>/dev/null
+        [ -n "$_fr_ty" ] || continue
+        is_blacklisted "$_fr_ty" && continue
+        case "$_fr_ty" in
+            *batt*|*battery*|*usb*)         [ -z "$_fr_b" ] && _fr_b=$_fr_z ;;
+            *soc*|*cpu*|*ap*|*gpu*|*tsens*) [ -z "$_fr_s" ] && _fr_s=$_fr_z ;;
+            *skin*|*shell*|*case*|*frame*)  [ -z "$_fr_k" ] && _fr_k=$_fr_z ;;
+        esac
+    done
+    _fuse_show_line "$_fr_b" "电池" "${FUSE_TEMP_BATT:-45000}"
+    _fuse_show_line "$_fr_s" "SoC " "${FUSE_TEMP_SOC:-80000}"
+    _fuse_show_line "$_fr_k" "外壳" "${FUSE_TEMP_SKIN:-46000}"
+    echo
+    echo "=== 保险丝触发记录（fuse.log）==="
+    if [ -s "$FUSE_LOG" ]; then
+        tail -n 10 "$FUSE_LOG" 2>/dev/null
+    else
+        echo "  （无 —— 说明保险丝从未触发过，正常情况就是没有）"
+    fi
+    echo
+    echo "=== 安全模式 / 开机自救 ==="
+    if safe_mode_active; then
+        echo "  安全模式 : 已激活（当前为保护态，MODE 会按 off 处理）"
+    else
+        echo "  安全模式 : 未激活"
+    fi
+    _bt=$(cat "$BOOT_TOKEN" 2>/dev/null); case "$_bt" in ''|*[!0-9]*) _bt=0 ;; esac
+    echo "  boot token : ${_bt} 次未完成开机（阈值 BOOT_FAIL_LIMIT=${BOOT_FAIL_LIMIT:-3}）"
+}
+
 # ══════════════════════════════════════════════════════════════
 #  v2.12.0 · 开机自救（boot token）与安全模式
 #
