@@ -761,8 +761,8 @@ cp "$MD/mode.conf" "$W/mode.conf"; cp "$MD/spoof.conf" "$W/spoof.conf"
 sec "K. 结构与静态一致性"
 _prop_v=$(grep -m1 '^version=' "$MD/module.prop" | cut -d= -f2)
 _prop_c=$(grep -m1 '^versionCode=' "$MD/module.prop" | cut -d= -f2)
-eq "K01 version=v2.16.0" "$_prop_v" "v2.16.0"
-eq "K02 versionCode=78" "$_prop_c" "78"
+eq "K01 version=v2.17.0" "$_prop_v" "v2.17.0"
+eq "K02 versionCode=79" "$_prop_c" "79"
 eq "K03 module id 未变" "$(grep -m1 '^id=' "$MD/module.prop" | cut -d= -f2)" "realme-gt8-sukisu-thermal-remove"
 _syn=0
 for f in "$MD"/*.sh "$MD"/common/*.sh "$MD"/webroot/cgi-bin/*.sh; do
@@ -867,6 +867,16 @@ printf '100 45000 1200000 2500000 500000000\n101 48000 960000 2500000 500000000\
 _hj=$(HISTORY_LIST="$W/history.list" sh "$MD/webroot/cgi-bin/api.sh" --history 2>/dev/null)
 eq "T09 --history success:true" "$(printf '%s' "$_hj" | grep -c '\"success\":true')" "1"
 eq "T10 --history 含两个采样点" "$(printf '%s' "$_hj" | grep -c '\[100,')" "1"
+
+# ══ 24. v2.17.0 U1：三段式 + WebUI 性能 ═══════════════════════
+sec "U. 三段式与性能"
+eq "U01 conf_get 零 fork（read 循环）" "$(grep -c 'while IFS= read -r _cg_ln' "$MD/webroot/cgi-bin/api.sh")" "1"
+eq "U02 conf_get 不再 sed" "$(grep -c 'sed -n \"s/^\$_k=//p\"' "$MD/webroot/cgi-bin/api.sh")" "0"
+eq "U03 tab 栏存在" "$(grep -c 'class=\"tabs\"' "$MD/webroot/index.html")" "1"
+eq "U04 3 个 tabpane" "$(grep -c 'class=\"tabpane' "$MD/webroot/index.html")" "3"
+eq "U05 switchTab 函数" "$(grep -c 'function switchTab' "$MD/webroot/index.html")" "1"
+eq "U06 温感懒加载" "$(grep -c 'THERMAL_LOADED' "$MD/webroot/index.html")" "3"
+eq "U07 CSS 有 tabpane" "$(grep -c 'tabpane' "$MD/webroot/style.css")" "2"
 
 
 

@@ -224,6 +224,18 @@ details[open] summary::before{content:'▾ ';}
   display:block;width:100%;height:auto;margin-top:10px;
   background:var(--bg);border:1px solid var(--line);border-radius:10px;
 }
+/* v2.16.0 U1：三段式导航 */
+.tabs{
+  display:flex;gap:8px;margin:0 0 4px;position:sticky;top:0;z-index:10;
+  background:var(--bg);padding:10px 2px;border-bottom:1px solid var(--line);
+}
+.tab{
+  flex:1;padding:10px 0;border:none;border-radius:12px;background:transparent;
+  color:var(--muted);font-size:14px;font-weight:600;cursor:pointer;
+}
+.tab.active{background:var(--card);color:var(--accent);box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.tabpane{display:none}
+.tabpane.active{display:block}
 .spin{
   flex:0 0 auto;width:12px;height:12px;border-radius:50%;
   border:2px solid #cfd8e6;border-top-color:var(--accent);

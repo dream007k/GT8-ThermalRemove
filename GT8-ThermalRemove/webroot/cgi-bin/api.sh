@@ -123,9 +123,16 @@ _strip() {
 
 conf_get() {
     _f="$1"; _k="$2"; _d="$3"
-    _v=$(sed -n "s/^$_k=//p" "$_f" 2>/dev/null | head -n 1)
+    # v2.16.0 性能：原实现 `sed | head` 每次 2 次 fork —— get_status 26 次 conf_get
+    # 就是 52 次 fork，是 WebUI 卡的主因之一。改纯 shell（read 内建 + case 前缀匹配），
+    # 零 fork；语义与原来一致（行首 KEY=、取首个、剥行内注释、strip、默认值）。
+    _v=""
+    while IFS= read -r _cg_ln || [ -n "$_cg_ln" ]; do
+        case "$_cg_ln" in
+            "$_k"=*) _v=${_cg_ln#*=}; _v=${_v%%#*}; break ;;
+        esac
+    done < "$_f" 2>/dev/null
     if [ -n "$_v" ]; then
-        _v=${_v%%#*}     # v2.13.0：剥行内注释，与 functions.sh 保持一致
         _strip "$_v"
         _v="$_sv"
     fi

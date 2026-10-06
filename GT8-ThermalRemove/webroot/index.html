@@ -17,6 +17,18 @@
 
 <main>
 
+  <!-- ══ 三段式导航（v2.16.0 U1）════════════════════════════════
+       概览=状态+核心开关+可视化（默认，只读状态，快）；
+       温感=实时温度+温感树+温频曲线（懒加载）；
+       诊断=高危开关+诊断工具（把"一点就炸"的开关收进这里）。 -->
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-tab="overview">概览</button>
+    <button class="tab" data-tab="thermal">温感</button>
+    <button class="tab" data-tab="diag">诊断</button>
+  </nav>
+
+  <div class="tabpane active" id="pane-overview">
+
   <!-- ══ 状态卡 ══ -->
   <section class="hero-card">
     <div class="hero-left">
@@ -143,6 +155,10 @@
   </div>
   <p class="msg" id="msg"></p>
 
+  </div>
+
+  <div class="tabpane" id="pane-thermal">
+
   <!-- ══ 实时温度 ══ -->
   <p class="sec-title">实时温度 <small id="temps-hint"></small></p>
   <section class="card" id="temps-card">
@@ -192,6 +208,10 @@
     <p class="zlegend" id="hist-legend" style="display:none"></p>
     <p class="tstate" id="hist-state">数据积累中：service 每 120 秒采一个点，约 2 分钟后可看趋势</p>
   </section>
+
+  </div>
+
+  <div class="tabpane" id="pane-diag">
 
   <!-- ══ 进阶选项 ══ -->
   <p class="sec-title">进阶选项</p>
@@ -243,6 +263,8 @@
     </div>
     <pre class="logbox" id="logbox"></pre>
   </section>
+
+  </div>
 
 </main>
 
@@ -1276,10 +1298,8 @@ setInterval(function(){
   if (ag && REAL_STATE === 'ok' && REAL_CACHE) ag.textContent = fmtAgo(Date.now() - REAL_CACHE.ts);
   if (s >= 60) {
     loadStatus(true);
-    loadTemps();
-    /* 温感树只在用户已经加载过时才跟着刷新（懒加载的延续），
-     * 且同样受 document.hidden 闸门保护 —— 页面不可见时整段不跑。 */
-    if (TREE_ZONES) loadTree();
+    /* v2.16.0 U1：温感列表/树只在用户切到过「温感」tab 后跟着刷新 */
+    if (THERMAL_LOADED) { loadTemps(); if (TREE_ZONES) loadTree(); }
   }
 }, 5000);
 
@@ -1384,6 +1404,23 @@ function toggleHistAuto() {
   }
 }
 
+/* ════════════════ 三段式导航（v2.16.0 U1） ════════════════ */
+var CUR_TAB = 'overview';
+var THERMAL_LOADED = false;
+function switchTab(name) {
+  CUR_TAB = name;
+  var ts = document.querySelectorAll('#tabs .tab');
+  for (var i = 0; i < ts.length; i++) {
+    ts[i].classList.toggle('active', ts[i].getAttribute('data-tab') === name);
+  }
+  var ps = document.querySelectorAll('.tabpane');
+  for (var j = 0; j < ps.length; j++) {
+    ps[j].classList.toggle('active', ps[j].id === 'pane-' + name);
+  }
+  /* 温感 tab 懒加载：首次切到才拉温感列表，避免启动多一次 --temps 的 fork */
+  if (name === 'thermal' && !THERMAL_LOADED) { THERMAL_LOADED = true; loadTemps(); }
+}
+
 /* ════════════════ 启动 ════════════════ */
 $('btn-save').onclick = save;
 /* 顶部「刷新」= 刷状态 + 顺带读取一次真实温度（属于用户主动操作） */
@@ -1403,6 +1440,11 @@ $('btn-tree-fold').onclick = foldAllTree;
 /* v2.16.0 F5：温频曲线 */
 $('btn-hist-load').onclick = loadHistory;
 $('btn-hist-auto').onclick = toggleHistAuto;
+/* v2.16.0 U1：三段式 tab 切换 */
+var _tabs = document.querySelectorAll('#tabs .tab');
+for (var _ti = 0; _ti < _tabs.length; _ti++) {
+  _tabs[_ti].onclick = function(){ switchTab(this.getAttribute('data-tab')); };
+}
 bindPresets();
 bindTree();
 /* 真实温度开关：写入配置；勾选上时按用户意图读一次，取消勾选只重绘不请求 */
@@ -1431,7 +1473,7 @@ loadStatus();
 loadConflicts();      /* 模块列表很少变化，只在加载/手动刷新时查一次 */
 loadPresets();        /* v2.11.0：场景预设档（含当前匹配度） */
 loadVersion();        /* 版本徽标从 module.prop 实时读，便于确认刷入的是哪一版 */
-loadTemps();          /* 首次只刷伪装值，真实温度等用户手动触发 */
+/* v2.16.0 U1：温感列表改切到「温感」tab 才懒加载，启动不再拉 --temps（省一次 fork） */
 renderRealState();
 /* 温感树刻意不在启动时加载 —— 83 个温感的请求留给用户显式点击（省电） */
 </script>
