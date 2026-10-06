@@ -104,17 +104,30 @@ export MODDIR="$MD" SELF_ID="realme-gt8-sukisu-thermal-remove"
 export MODULES_DIR="$W/modules" CONF_PERSISTENT=0
 unset TR_SIDE_EFFECTS
 FNF="$W/functions_test.sh"
+# v2.14.0（A3）：functions.sh 拆成 8 个 lib，副本生成一并处理 ——
+# 每个 lib 生成路径改写副本，functions_test.sh 的 source 重定向到 lib 副本。
 "$PY" -c "
 import io, sys
-src, dst, w = sys.argv[1], sys.argv[2], sys.argv[3]
-s = io.open(src, encoding='utf-8').read()
-s = s.replace('/sys/class/thermal',        w + '/fake/sys/class/thermal')
-s = s.replace('/sys/class/power_supply',   w + '/fake/sys/class/power_supply')
-s = s.replace('/data/adb/thermal_remove',  w + '/gate')
-s = s.replace('/data/adb/modules',         w + '/modules')
-s = s.replace('rm -rf ', 'rmx -rf ').replace('rm -f ', 'rmx -f ')
+md, dst, w = sys.argv[1], sys.argv[2], sys.argv[3]
+LIBS = ['log','config','spoof','perf','system','state','fuse','doctor']
+REPL = [
+    ('/sys/class/thermal',        w + '/fake/sys/class/thermal'),
+    ('/sys/class/power_supply',   w + '/fake/sys/class/power_supply'),
+    ('/data/adb/thermal_remove',  w + '/gate'),
+    ('/data/adb/modules',         w + '/modules'),
+]
+def rep(s):
+    for a, b in REPL:
+        s = s.replace(a, b)
+    return s.replace('rm -rf ', 'rmx -rf ').replace('rm -f ', 'rmx -f ')
+for lib in LIBS:
+    ls = io.open(md + '/' + lib + '.sh', encoding='utf-8').read()
+    io.open(w + '/' + lib + '_test.sh', 'w', encoding='utf-8', newline='\n').write(rep(ls))
+s = rep(io.open(md + '/functions.sh', encoding='utf-8').read())
+for lib in LIBS:
+    s = s.replace('\"\$MODDIR/common/%s.sh\"' % lib, '\"' + w + '/%s_test.sh\"' % lib)
 io.open(dst, 'w', encoding='utf-8', newline='\n').write(s)
-" "$MD/common/functions.sh" "$FNF" "$W"
+" "$MD/common" "$FNF" "$W"
 . "$FNF"
 PTEST="$W/presets_test.sh"
 AIT="$W/api_test.sh"
@@ -247,7 +260,7 @@ eq "C10 还原写回原值(nd1)" "$(cat "$nd1")" "100"
 eq "C11 还原写回原值(nd2)" "$(cat "$nd2")" "200"
 eq "C12 还原写回原值(nd3)" "$(cat "$nd3")" "300"
 eq "C13 还原后备份清空" "$(wc -c < "$SYSFS_BAK" | tr -d ' ')" "0"
-eq "C14 restore_sysfs 调用 restore_locked_nodes" "$(grep -c 'restore_locked_nodes' "$MD/common/functions.sh")" "$(grep -c 'restore_locked_nodes' "$MD/common/functions.sh")"
+eq "C14 restore_sysfs 调用 restore_locked_nodes" "$(grep -c 'restore_locked_nodes' "$MD/common/config.sh")" "$(grep -c 'restore_locked_nodes' "$MD/common/config.sh")"
 
 # ══ 5. 温感分类 / 黑名单 ════════════════════════════════════
 sec "D. 温感分类与黑名单"
@@ -622,10 +635,10 @@ ps() { printf 'PID   USER     TIME  COMMAND\n1     root     0:01  init\n4321  ro
 eq "N03 busybox 列序取到 PID（原实现会拿到 USER 名）" "$(pid_of_name perfservice | tr -d ' ')" "4321"
 unset -f pidof ps
 # 静态：cleanup_stale_tmp 存在且被 boot-completed 调用；只清本模块前缀 + 2 小时门槛
-eq "N04 cleanup_stale_tmp 已定义" "$(grep -c '^cleanup_stale_tmp()' "$MD/common/functions.sh")" "1"
+eq "N04 cleanup_stale_tmp 已定义" "$(grep -c '^cleanup_stale_tmp()' "$MD/common/doctor.sh")" "1"
 eq "N05 boot-completed 调用清理" "$(grep -c 'cleanup_stale_tmp' "$MD/boot-completed.sh")" "1"
-eq "N06 只清本模块前缀" "$(grep -c "name 'gt8_" "$MD/common/functions.sh")" "1"
-eq "N07 带 2 小时门槛" "$(grep -c 'mmin +120' "$MD/common/functions.sh")" "1"
+eq "N06 只清本模块前缀" "$(grep -c "name 'gt8_" "$MD/common/doctor.sh")" "1"
+eq "N07 带 2 小时门槛" "$(grep -c 'mmin +120' "$MD/common/doctor.sh")" "1"
 # 静态：get_status 外部来源字段已过 _jesc（C-4）
 eq "N08 state 字段过 _jesc" "$(grep -c '_jesc "\$_state"' "$MD/webroot/cgi-bin/api.sh")" "1"
 eq "N09 model 字段过 _jesc" "$(grep -c '_jesc "\$(getprop ro.product.model' "$MD/webroot/cgi-bin/api.sh")" "1"
@@ -727,8 +740,8 @@ cp "$MD/mode.conf" "$W/mode.conf"; cp "$MD/spoof.conf" "$W/spoof.conf"
 sec "K. 结构与静态一致性"
 _prop_v=$(grep -m1 '^version=' "$MD/module.prop" | cut -d= -f2)
 _prop_c=$(grep -m1 '^versionCode=' "$MD/module.prop" | cut -d= -f2)
-eq "K01 version=v2.13.3" "$_prop_v" "v2.13.3"
-eq "K02 versionCode=68" "$_prop_c" "68"
+eq "K01 version=v2.14.0" "$_prop_v" "v2.14.0"
+eq "K02 versionCode=69" "$_prop_c" "69"
 eq "K03 module id 未变" "$(grep -m1 '^id=' "$MD/module.prop" | cut -d= -f2)" "realme-gt8-sukisu-thermal-remove"
 _syn=0
 for f in "$MD"/*.sh "$MD"/common/*.sh "$MD"/webroot/cgi-bin/*.sh; do
@@ -737,7 +750,7 @@ done
 eq "K04 全部 shell 文件语法通过" "$_syn" "0"
 eq "K05 service.sh 单一 while 循环" "$(grep -c 'while true' "$MD/service.sh")" "1"
 eq "K06 customize 有废弃键清理逻辑" "$(grep -c '_dep_keys="CPU_LIMIT_MODE' "$MD/customize.sh")" "1"
-eq "K07 CPU 限频函数已无定义" "$(grep -c '^cpu_max_cap_into()\|^_freq_best_into()' "$MD/common/functions.sh")" "0"
+eq "K07 CPU 限频函数已无定义" "$(grep -lE '^cpu_max_cap_into\(\)|^_freq_best_into\(\)' "$MD"/common/*.sh 2>/dev/null | wc -l | tr -d ' ')" "0"
 _i_rs=$(grep -n '^    restore_spoof$' "$MD/uninstall.sh" | head -n 1 | cut -d: -f1)
 _i_rm=$(grep -n 'rm -rf /data/adb/thermal_remove' "$MD/uninstall.sh" | head -n 1 | cut -d: -f1)
 [ -n "$_i_rm" ] && [ -n "$_i_rs" ] && [ "$_i_rs" -lt "$_i_rm" ] && ok || bad "K08 卸载顺序：先还原后删目录" "rs=$_i_rs rm=$_i_rm" "rs<rm"
@@ -748,7 +761,10 @@ eq "K12 index.html 无未转义 innerHTML 动态字段残留" "$(grep -c 'innerH
 eq "K13 README 含 v2.11.1" "$(grep -c 'v2\.11\.1' "$MD/README.md")" "$(grep -c 'v2\.11\.1' "$MD/README.md")"
 eq "K14 presets 目录 5 档齐全" "$(ls "$MD/presets" | grep -c '\.conf$')" "5"
 for f in README.md module.prop mode.conf spoof.conf action.sh service.sh customize.sh post-fs-data.sh uninstall.sh \
-         common/functions.sh common/presets.sh common/conflicts.sh webroot/index.html webroot/cgi-bin/api.sh; do
+         common/functions.sh common/presets.sh common/conflicts.sh common/schema.sh \
+         common/log.sh common/config.sh common/spoof.sh common/perf.sh \
+         common/system.sh common/state.sh common/fuse.sh common/doctor.sh \
+         webroot/index.html webroot/cgi-bin/api.sh; do
     [ -f "$MD/$f" ] && ok || bad "K15 交付文件存在: $f" "missing" "present"
 done
 # v2.13.1 U2 写回执（前端静态断言）
@@ -756,13 +772,31 @@ eq "K16 前端有 verifyWriteBack" "$(grep -c 'function verifyWriteBack' "$MD/we
 eq "K17 save 调用写回执" "$(grep -c 'verifyWriteBack(pairs);' "$MD/webroot/index.html")" "1"
 eq "K18 回执只比对暴露键" "$(grep -c 'k in s' "$MD/webroot/index.html")" "1"
 # v2.13.3 诊断包 07-fuse 节（静态断言）
-eq "K19 functions 有 fuse_report" "$(grep -c '^fuse_report()' "$MD/common/functions.sh")" "1"
-eq "K20 functions 有 _fuse_read_one" "$(grep -c '^_fuse_read_one()' "$MD/common/functions.sh")" "1"
-eq "K21 _fuse_read_one 用原值恢复" "$(grep -c 'echo.*_fr_orig.*emul_temp' "$MD/common/functions.sh")" "1"
+eq "K19 fuse 有 fuse_report" "$(grep -c '^fuse_report()' "$MD/common/fuse.sh")" "1"
+eq "K20 fuse 有 _fuse_read_one" "$(grep -c '^_fuse_read_one()' "$MD/common/fuse.sh")" "1"
+eq "K21 _fuse_read_one 用原值恢复" "$(grep -c 'echo.*_fr_orig.*emul_temp' "$MD/common/fuse.sh")" "1"
 eq "K22 diagpack 生成 07-fuse.txt" "$(grep -c '07-fuse.txt' "$MD/action.sh")" "3"
 eq "K23 README 清单含 07-fuse" "$(grep -c '07-fuse.txt.*温度保险丝状态' "$MD/action.sh")" "1"
 eq "K24 降级列表含 07-fuse" "$(grep -c '07-fuse.txt; do' "$MD/action.sh")" "1"
 eq "K25 action fuse 复用 fuse_report" "$(grep -c '^        fuse_report$' "$MD/action.sh")" "2"
+
+# ══ 20. v2.14.0 A3：functions.sh 按功能域拆分 ═══════════════════
+sec "Q. 拆分完整性"
+for _lib in log config spoof perf system state fuse doctor; do
+    [ -f "$MD/common/$_lib.sh" ] && ok || bad "Q01 lib 存在: $_lib.sh" "missing" "present"
+done
+eq "Q02 functions.sh 纯聚合（0 函数定义）" "$(grep -cE '^[a-zA-Z_][a-zA-Z0-9_]*\(\)' "$MD/common/functions.sh")" "0"
+eq "Q03 functions.sh source 8 个 lib" "$(grep -cE '\. "\$MODDIR/common/(log|config|spoof|perf|system|state|fuse|doctor)\.sh"' "$MD/common/functions.sh")" "8"
+eq "Q04 函数总数守恒（79）" "$(grep -hE '^[a-zA-Z_][a-zA-Z0-9_]*\(\)' "$MD"/common/functions.sh "$MD"/common/log.sh "$MD"/common/config.sh "$MD"/common/spoof.sh "$MD"/common/perf.sh "$MD"/common/system.sh "$MD"/common/state.sh "$MD"/common/fuse.sh "$MD"/common/doctor.sh | wc -l | tr -d ' ')" "79"
+eq "Q05 load_conf 在 config.sh" "$(grep -c '^load_conf()' "$MD/common/config.sh")" "1"
+eq "Q06 apply_spoof 在 spoof.sh" "$(grep -c '^apply_spoof()' "$MD/common/spoof.sh")" "1"
+eq "Q07 unlock_perf 在 perf.sh" "$(grep -c '^unlock_perf()' "$MD/common/perf.sh")" "1"
+eq "Q08 maintain_state 在 state.sh" "$(grep -c '^maintain_state()' "$MD/common/state.sh")" "1"
+eq "Q09 fuse_tick 在 fuse.sh" "$(grep -c '^fuse_tick()' "$MD/common/fuse.sh")" "1"
+eq "Q10 dump_temp 在 doctor.sh" "$(grep -c '^dump_temp()' "$MD/common/doctor.sh")" "1"
+eq "Q11 log_conflicts 在 log.sh" "$(grep -c '^log_conflicts()' "$MD/common/log.sh")" "1"
+eq "Q12 mount_config_overlays 在 system.sh" "$(grep -c '^mount_config_overlays()' "$MD/common/system.sh")" "1"
+
 
 # ══ 13. 收尾 ═════════════════════════════════════════════════
 # 假 sysfs 树 / 假模块 / 运行目录全部集中在本 run 目录下（$W），

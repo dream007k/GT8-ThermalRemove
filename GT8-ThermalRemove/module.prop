@@ -1,7 +1,7 @@
 id=realme-gt8-sukisu-thermal-remove
 name=GT8 ThermalRemove
-version=v2.13.3
-versionCode=68
+version=v2.14.0
+versionCode=69
 author=修
 description=真我GT8（RMX6699/骁龙8至尊版 SM8750）SukiSU 温控移除模块，适配 Android 16 / realme UI 7.0（已实机验证）。通过 emul_temp 温度欺骗让温控引擎读不到高温，从而不限频；并在安装时改写 OPPO/realme 私有温控配置阈值，双管齐下。支持场景化模式（充电时自动恢复原厂保护）、频率解锁、配置改写独立开关。内置 5 档场景预设（原厂/日用均衡/游戏满血/降温优先/排障）一键切换，预设只接管自己声明过的键、不动黑名单等个性化设置。WebUI 可查看伪装值与真实温度、按功能域展开「温感树」逐个体检（含"为什么这个温感没被欺骗"）、在树上直接增删黑名单、实时调整欺骗温度，并能检测其他温控模块以避免互相覆盖。⚠ 移除温控后重载场景机身温度会显著升高，可能加速电池老化，极端情况损伤硬件；SoC 硬件级过热保护无法被软件移除。风险自负。
 support=https://github.com/ShirkNeko/SukiSU-Ultra

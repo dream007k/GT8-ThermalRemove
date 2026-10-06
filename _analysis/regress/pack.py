@@ -3,7 +3,7 @@ import zipfile, os
 BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.chdir(BASE)
 src = 'GT8-ThermalRemove'
-out = 'GT8-ThermalRemove-v2.13.3.zip'
+out = 'GT8-ThermalRemove-v2.14.0.zip'
 if os.path.exists(out):
     os.remove(out)
 zf = zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED, compresslevel=9)
@@ -19,20 +19,32 @@ z = zipfile.ZipFile(out)
 names = z.namelist()
 print('files:', len(names))
 prop = z.read('module.prop').decode('utf-8')
-assert 'version=v2.13.3' in prop and 'versionCode=68' in prop, prop
+assert 'version=v2.14.0' in prop and 'versionCode=69' in prop, prop
 api = z.read('webroot/cgi-bin/api.sh').decode('utf-8')
 for needle in ['_cgi_origin_ok', '拒绝跨源写请求', '没有可保存的项', '_msg=$(_jesc',
                'fuse_trips', 'safe_mode', 'get_doctor']:
     assert needle in api, needle
-fn = z.read('common/functions.sh').decode('utf-8')
-for needle in ['fuse_tick', 'fuse_sample_check', 'panic_to_safe', 'pid_of_name',
-               'safe_mode_active', 'cleanup_stale_tmp', 'doctor_report',
-               'fuse_report', '_fuse_read_one']:
-    assert needle in fn, needle
+for _lib in ['log','config','spoof','perf','system','state','fuse','doctor']:
+    assert 'common/%s.sh' % _lib in names, 'common/%s.sh' % _lib
+# A3：关键函数已按域搬迁到对应 lib（抽样校验，函数总数守恒见回归 Q 组）
+_map = {
+    'common/fuse.sh':   ['fuse_tick', 'fuse_sample_check', 'panic_to_safe', 'safe_mode_active', 'fuse_report', '_fuse_read_one'],
+    'common/perf.sh':   ['unlock_perf', 'reapply_perf', 'pid_of_name', 'stop_thermal_services'],
+    'common/doctor.sh': ['doctor_report', 'cleanup_stale_tmp', 'dump_temp', 'dump_cdev'],
+    'common/state.sh':  ['maintain_state', 'apply_state', 'decide_state_into'],
+    'common/spoof.sh':  ['apply_spoof', 'restore_spoof', 'zone_target_into'],
+    'common/config.sh': ['load_conf', 'restore_sysfs', 'conf_get'],
+    'common/system.sh': ['mount_config_overlays', 'unmount_config_overlays'],
+    'common/log.sh':    ['_log_emit', 'log_info', '_log_level_norm'],
+}
+for _lib, _funcs in _map.items():
+    _c = z.read(_lib).decode('utf-8')
+    for _f in _funcs:
+        assert _f in _c, (_lib, _f)
 act = z.read('action.sh').decode('utf-8')
 assert '07-fuse.txt' in act
 rd = z.read('README.md').decode('utf-8')
-assert 'v2.13.3' in rd
+assert 'v2.14.0' in rd
 assert 'common/schema.sh' in names
 must = ['META-INF/com/google/android/update-binary', 'common/functions.sh',
         'common/presets.sh', 'common/conflicts.sh', 'presets/stock.conf',
