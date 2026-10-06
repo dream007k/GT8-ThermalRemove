@@ -1,0 +1,6 @@
+id=thermal_horae_extreme
+name=温控 Horae 统一控制
+version=v6.0.1
+versionCode=601
+author=海盐风
+description=合并「狂暴温控」与「Horae Unified Control」功能：安装时扫描并patch温控降频保护配置解除限制；提供WebUI配置界面，支持静态/动态两种运行模式

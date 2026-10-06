@@ -1,0 +1,32 @@
+name: verify
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 语法检查（全部 shell 脚本）
+        run: |
+          for f in GT8-ThermalRemove/*.sh \
+                   GT8-ThermalRemove/common/*.sh \
+                   GT8-ThermalRemove/webroot/cgi-bin/*.sh; do
+            bash -n "$f" || { echo "语法错误: $f"; exit 1; }
+          done
+
+      - name: 行为等价性回归套件
+        run: bash _analysis/regress/verify.sh
+
+      - name: 打包与解包校验
+        run: python3 _analysis/regress/pack.py
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: module-zip
+          path: GT8-ThermalRemove-v*.zip
+          if-no-files-found: ignore

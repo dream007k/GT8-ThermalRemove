@@ -1,0 +1,1313 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>GT8 ThermalRemove</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- 下拉刷新提示条（仅用于手动读取真实温度） -->
+<div class="ptr" id="ptr"><span id="ptr-t">↓ 下拉读取真实温度</span></div>
+
+<header class="hero">
+  <h1>GT8 ThermalRemove</h1>
+</header>
+
+<main>
+
+  <!-- ══ 状态卡 ══ -->
+  <section class="hero-card">
+    <div class="hero-left">
+      <div class="hero-row">
+        <span class="state-title" id="s-state-big">—</span>
+        <span class="pill" id="ver-pill">●</span>
+      </div>
+      <div class="hero-sub" id="devinfo">加载中…</div>
+      <div class="hero-sub" id="refresh-info">数据刷新于 0 秒前</div>
+    </div>
+    <div class="hero-icon" id="hero-icon">
+      <svg viewBox="0 0 48 48" width="72" height="72">
+        <circle cx="24" cy="24" r="21" fill="none" stroke="#2b6cb0" stroke-width="4"
+                stroke-linecap="round" stroke-dasharray="110 22" transform="rotate(-90 24 24)"/>
+        <path d="M14 25 l7 7 l13 -15" fill="none" stroke="#2b6cb0" stroke-width="4.5"
+              stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+  </section>
+
+  <!-- ══ 模块冲突检测（v2.8；无冲突时整块隐藏）══ -->
+  <section class="card cbox" id="conflict-box" style="display:none">
+    <p class="cbox-title">检测到其他温控模块</p>
+    <ul class="clist" id="conflict-list"></ul>
+    <p class="cbox-tip">温控类模块会争抢同一批资源（emul_temp / horae 服务 / shell-temp /
+      sys_thermal* XML / cooling_device）。装多个不会叠加效果，只会互相覆盖 ——
+      表现为温控行为随机、亮度异常等难以复现的问题。建议只保留一个。</p>
+  </section>
+
+  <!-- ══ 功能磁贴 ══ -->
+  <section class="chips">
+    <div class="chip" id="chip-spoof">
+      <span class="cicon ci-blue">❄</span>
+      <span class="ctext"><span class="clabel">温控欺骗</span><span class="cstate">—</span></span>
+    </div>
+    <button class="chip" data-key="UNLOCK_FREQ">
+      <span class="cicon ci-blue">⚡</span>
+      <span class="ctext"><span class="clabel">频率解锁</span><span class="cstate">—</span></span>
+    </button>
+    <button class="chip" data-key="PATCH_THERMAL">
+      <span class="cicon ci-purple">🔧</span>
+      <span class="ctext"><span class="clabel">配置改写</span><span class="cstate">—</span></span>
+    </button>
+    <button class="chip" data-key="TOUCH_BOOST">
+      <span class="cicon ci-orange">👆</span>
+      <span class="ctext"><span class="clabel">触控加速</span><span class="cstate">—</span></span>
+    </button>
+    <button class="chip" data-key="SPOOF_BATT">
+      <span class="cicon ci-green">🔋</span>
+      <span class="ctext"><span class="clabel">电池欺骗</span><span class="cstate">—</span></span>
+    </button>
+    <div class="chip" id="chip-protect">
+      <span class="cicon ci-red">🛡</span>
+      <span class="ctext"><span class="clabel">显示保护</span><span class="cstate">—</span></span>
+    </div>
+  </section>
+
+  <!-- ══ 场景预设档（v2.11.0）════════════════════════════════════
+       一个预设 = 一组"场景化的配置档案"。点一下就切到该场景；
+       预设只接管自己声明过的键，BLACKLIST / 真实温度开关等个性化设置
+       不会被改动（详见 common/presets.sh 顶部说明）。
+       卡片上的「N/M 项匹配」由后端无状态比对得出：手改任一开关后，
+       匹配数立刻下降，界面自然显示为「自定义」，不会撒谎。 -->
+  <p class="sec-title">场景预设 <small id="preset-hint"></small></p>
+  <section class="presets" id="presets">
+    <p class="pempty">加载中…</p>
+  </section>
+
+  <!-- ══ 温控统计 ══ -->
+  <p class="sec-title">温控统计</p>
+  <section class="stats">
+    <div class="stat"><span class="sicon si-red">🔥</span>
+      <span class="stext"><b id="st-spoof">—</b><i>欺骗中温感</i></span></div>
+    <div class="stat"><span class="sicon si-blue">📡</span>
+      <span class="stext"><b id="st-total">—</b><i>温感总数</i></span></div>
+    <div class="stat"><span class="sicon si-green">✔</span>
+      <span class="stext"><b id="st-emu">—</b><i>emul_temp 支持</i></span></div>
+    <div class="stat"><span class="sicon si-purple">📎</span>
+      <span class="stext"><b id="st-mount">—</b><i>已挂载配置</i></span></div>
+  </section>
+
+  <!-- ══ 运行模式 ══ -->
+  <p class="sec-title">运行模式</p>
+  <section class="card">
+    <label class="opt">
+      <input type="radio" name="MODE" value="dynamic">
+      <span><b>dynamic</b> — 场景化：充电时自动恢复保护<i>（推荐）</i></span>
+    </label>
+    <label class="opt">
+      <input type="radio" name="MODE" value="always">
+      <span><b>always</b> — 始终移除温控（激进）</span>
+    </label>
+    <label class="opt">
+      <input type="radio" name="MODE" value="off">
+      <span><b>off</b> — 全部关闭，等同原厂</span>
+    </label>
+    <label class="sw">
+      <input type="checkbox" id="GAME_PROTECT">
+      <span>游戏时也保留原厂保护</span>
+    </label>
+  </section>
+
+  <!-- ══ 欺骗温度（摄氏度）══ -->
+  <p class="sec-title">欺骗温度（°C）</p>
+  <section class="card">
+    <div class="fields">
+      <label class="num"><span class="nl">SoC / 主板</span>
+        <span class="ni"><input type="number" id="SOC_T" step="0.5" min="0" max="100"><em>°C</em></span></label>
+      <label class="num"><span class="nl">外壳 / 皮肤</span>
+        <span class="ni"><input type="number" id="SKIN_T" step="0.5" min="0" max="100"><em>°C</em></span></label>
+      <label class="num"><span class="nl">相机</span>
+        <span class="ni"><input type="number" id="CAM_T" step="0.5" min="0" max="100"><em>°C</em></span></label>
+      <label class="num"><span class="nl">电池</span>
+        <span class="ni"><input type="number" id="BATT_T" step="0.5" min="0" max="100"><em>°C</em></span></label>
+      <label class="num"><span class="nl">shell-temp 接口</span>
+        <span class="ni"><input type="number" id="SHELL_PROC_T" step="0.5" min="0" max="100"><em>°C</em></span></label>
+    </div>
+    <p class="hint">温控引擎读到这些温度后达不到任何阈值，因此不会限频。29.5°C 即原先的 29500 毫摄氏度。</p>
+  </section>
+
+  <div class="actions">
+    <button id="btn-save" class="primary">保存并应用</button>
+    <button id="btn-refresh">刷新</button>
+  </div>
+  <p class="msg" id="msg"></p>
+
+  <!-- ══ 实时温度 ══ -->
+  <p class="sec-title">实时温度 <small id="temps-hint"></small></p>
+  <section class="card" id="temps-card">
+    <div class="tbar" id="tbar"></div>
+    <p class="zlegend">温度显示为 <b>伪装值</b> / <span>真实值</span>（°C）——真实温度<b>只在手动刷新时</b>读取</p>
+    <ul class="zones" id="zones"><li class="empty">读取中…</li></ul>
+    <p class="tstate" id="tstate"></p>
+    <div class="btnrow">
+      <button id="btn-all">显示全部温感</button>
+      <button id="btn-real" class="primary">读取真实温度</button>
+    </div>
+    <div class="btnrow">
+      <label class="mini"><input type="checkbox" id="SHOW_REAL_TEMP" checked><span>允许读取真实温度</span></label>
+    </div>
+  </section>
+
+  <!-- ══ 温感树（v2.11.0）════════════════════════════════════════
+       按功能域把全部温感（含未参与欺骗的）组织成两级树：
+         分类节点（CPU / GPU / 电池…）→ 叶子（单个温感）
+       分类节点的聚合值是"一眼看全貌"，叶子节点回答"为什么这个温感
+       没被欺骗"（ex 列）。树的**分类映射在后端**算（get_temps 的 grp/cls），
+       前端只负责展示与交互 —— 名称→类别这类匹配规则只能有一份实现。
+       懒加载：默认不请求，点按钮或展开时才拉 --all（83 个温感）。 -->
+  <p class="sec-title">温感树 <small id="tree-hint"></small></p>
+  <section class="card" id="tree-card">
+    <p class="zlegend">按功能域分组；<b>欺骗中</b>的显示为 <b>伪装值</b> / <span>真实值</span>。
+      行尾的屏蔽开关直接改 <code>BLACKLIST</code>（该温感不再参与欺骗）。</p>
+    <div class="btnrow">
+      <button id="btn-tree-load">加载温感树</button>
+      <button id="btn-tree-fold" class="ghost">全部折叠</button>
+    </div>
+    <ul class="tree" id="tree">
+      <li class="empty">点「加载温感树」按分类展开全部温感（含未参与欺骗的）</li>
+    </ul>
+  </section>
+
+  <!-- ══ 进阶选项 ══ -->
+  <p class="sec-title">进阶选项</p>
+  <section class="card">
+    <details>
+      <summary>展开全部进阶开关（默认关闭，逐项开启）</summary>
+      <div class="adv">
+        <label class="sw"><input type="checkbox" id="DISPLAY_PROTECT"><span>显示类冷却节点保护<i>（永不改写亮度/背光节点，务必保持开启）</i></span></label>
+        <label class="sw"><input type="checkbox" id="OPPO_SHELL_TEMP"><span>/proc/shell-temp 写入<i>（⚠ 与屏幕亮度直接相关）</i></span></label>
+        <label class="sw"><input type="checkbox" id="PATCH_EXTRA"><span>扩展配置改写<i>（⚠ 含 oppo_display_perf_list.xml）</i></span></label>
+        <label class="sw"><input type="checkbox" id="HORAE_TESTMODE"><span>调用 OPPO HORAE testmode</span></label>
+        <label class="sw"><input type="checkbox" id="DISABLE_ORMS"><span>停用 OPPO ORMS 服务</span></label>
+        <label class="sw"><input type="checkbox" id="OPPO_GAUGE"><span>强制写入 GAUGE_UPDATE<i>（作用不明确）</i></span></label>
+        <label class="sw"><input type="checkbox" id="TOUCH_THREAD_BOOST"><span>inputflinger 线程提权<i>（InputReader/Dispatcher 的 nice，非实时优先级）</i></span></label>
+        <label class="sw"><input type="checkbox" id="UNLOCK_CDEV"><span>强制归零 cooling_device<i>（⚠ 会压低亮度，默认关）</i></span></label>
+        <label class="sw"><input type="checkbox" id="STOP_SERVICES"><span>停用 thermal 服务<i>（极端兜底）</i></span></label>
+        <label class="sw"><input type="checkbox" id="REPLACE_ENCRYPTED"><span>替换加密 sys_thermal_config<i>（仅重装时生效）</i></span></label>
+        <label class="sw">
+          <span>日志级别
+            <i>（debug=详细 / info=默认 / warn=仅异常 / error=仅核心失效）</i>
+          </span>
+          <select id="LOG_LEVEL" class="sel">
+            <option value="debug">debug</option>
+            <option value="info">info</option>
+            <option value="warn">warn</option>
+            <option value="error">error</option>
+          </select>
+        </label>
+        <div class="btnrow">
+          <button id="btn-safe" class="ghost">亮度异常一键恢复安全项</button>
+        </div>
+      </div>
+    </details>
+  </section>
+
+  <!-- ══ 诊断 ══ -->
+  <p class="sec-title">诊断</p>
+  <section class="card">
+    <div class="btnrow">
+      <button id="btn-log">日志末尾</button>
+      <button id="btn-export">导出日志</button>
+      <button id="btn-verify">校验欺骗</button>
+      <button id="btn-diag" class="ghost">亮度诊断</button>
+      <button id="btn-doctor" class="ghost">一键体检</button>
+    </div>
+    <div class="btnrow">
+      <button id="btn-diagpack" class="primary">导出诊断包</button>
+      <span class="hint" id="diagpack-hint">一键收集设备信息、配置、运行状态、温感读数与日志，打包到 /sdcard/Download</span>
+    </div>
+    <pre class="logbox" id="logbox"></pre>
+  </section>
+
+</main>
+
+<footer>
+  <p>SukiSU / KernelSU 模块 · <span id="foot-ver"></span> · <span class="chan" id="chan"></span></p>
+  <p>日志：/data/adb/thermal_remove/thermal_remove.log</p>
+</footer>
+
+<script>
+'use strict';
+
+/* ════════════════ 后端通道 ════════════════
+ * 管理器内打开 → ksu.exec root 直连（首选）
+ * 浏览器打开（先点 Action 启动 httpd）→ CGI
+ */
+var MOD_ID = 'realme-gt8-sukisu-thermal-remove';
+var MODDIR = '/data/adb/modules/' + MOD_ID;
+var API_SCRIPT = MODDIR + '/webroot/cgi-bin/api.sh';
+var HTTPD_BASE = 'http://127.0.0.1:37654';
+
+(function detectModdir() {
+  try {
+    var m = decodeURIComponent(location.pathname).match(/\/data\/adb\/modules\/([^\/]+)\//);
+    if (m && m[1]) {
+      MOD_ID = m[1];
+      MODDIR = '/data/adb/modules/' + MOD_ID;
+      API_SCRIPT = MODDIR + '/webroot/cgi-bin/api.sh';
+    }
+  } catch (e) {}
+})();
+
+var HAS_KSU  = typeof ksu !== 'undefined' && ksu && typeof ksu.exec === 'function';
+var IS_HTTPD = location.protocol === 'http:' &&
+               /^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname);
+
+/* v2.11.0 修复（真实缺陷）：原 cgiUrl() 只返回脚本路径，**丢掉了 query** ——
+ * 而 busybox httpd 是把 URL 的查询串放进 QUERY_STRING 交给 CGI 的，api.sh 也
+ * 靠 $QUERY_STRING 分派。结果：走 httpd 通道时每个请求都落到 api.sh 的
+ * `*) 未知操作` 分支，界面始终读不到任何数据（只有 ksu.exec 通道正常，所以
+ * 一直没被发现）。现在把 query 一并带上。 */
+function cgiUrl(query) {
+  var u = IS_HTTPD ? 'cgi-bin/api.sh' : HTTPD_BASE + '/cgi-bin/api.sh';
+  if (query) u += '?' + query;
+  return u;
+}
+
+function $(id){ return document.getElementById(id); }
+function msg(t, ok){ var m=$('msg'); m.textContent=t; m.className='msg '+(ok?'ok':'err'); }
+function c2v(v){ return (parseInt(v,10)/1000).toFixed(1); }
+function sanitize(v){ return String(v).replace(/[^A-Za-z0-9_.=:+-]/g, ''); }
+
+/* ── ksu.exec（root 直连） ─────────────────────────────────── */
+function ksuExec(cmd) {
+  return new Promise(function(resolve, reject){
+    var cb = 'kx_' + Date.now() + '_' + Math.floor(Math.random() * 1000000);
+    var done = false;
+    var timer = setTimeout(function(){
+      if (done) return; done = true;
+      try { delete window[cb]; } catch(e){ window[cb] = undefined; }
+      reject(new Error('执行超时'));
+    }, 15000);
+    window[cb] = function(errno, stdout, stderr){
+      if (done) return; done = true;
+      clearTimeout(timer);
+      try { delete window[cb]; } catch(e){ window[cb] = undefined; }
+      var ec = parseInt(errno, 10);
+      if (ec === 0) resolve({ stdout: stdout || '', stderr: stderr || '' });
+      else reject(new Error('exit ' + errno + (stderr ? ' ' + stderr : '')));
+    };
+    try { ksu.exec(cmd, '{}', cb); } catch (e) {
+      done = true; clearTimeout(timer); reject(e);
+    }
+  });
+}
+
+function execJson(cliArgs) {
+  return ksuExec('sh ' + API_SCRIPT + ' ' + cliArgs).then(function(r){
+    var out = (r.stdout || '').trim();
+    var i = out.indexOf('{');
+    if (i < 0) throw new Error('后端无输出');
+    return JSON.parse(out.slice(i));
+  });
+}
+
+function cgiJson(query, opt) {
+  return fetch(cgiUrl(query), opt || { method: 'GET' }).then(function(r){ return r.json(); });
+}
+
+/* ══ 版本号实时读取 ════════════════════════════════════════
+ * 之前版本徽标是硬编码在 HTML 里的，改版忘了改就会出现
+ * 「刷了新包界面还显示旧版本」—— 排版期无法判断改动是否落地。
+ * 现在：root 通道直接读 module.prop；读不到再退回内置兜底值。
+ */
+var FALLBACK_VER = 'v2.8.2';
+function setVer(v){
+  var p = $('ver-pill'); if (p) p.textContent = '● ' + v;
+  var f = $('foot-ver'); if (f) f.textContent = v;
+}
+/* v2.9.3：状态接口已带出版本号，优先用它 —— 不再依赖写死的 FALLBACK_VER
+ *（原来只在 HTTP/CGI 通道下回退到常量，而常量停在 v2.8.2，徽标会显示错版本）。 */
+function loadVersion(){
+  if (LAST && LAST.version) { setVer(LAST.version); return; }
+  if (!HAS_KSU) { setVer(FALLBACK_VER); return; }
+  ksuExec('cat ' + MODDIR + '/module.prop').then(function(r){
+    var m = /(?:^|\n)version=([^\r\n]+)/.exec(r.stdout || '');
+    setVer(m ? m[1].trim() : FALLBACK_VER);
+  }).catch(function(){ setVer(FALLBACK_VER); });
+}
+
+function apiStatus() {
+  if (HAS_KSU) return execJson('--status');
+  return cgiJson('action=status');
+}
+
+/* 实时温度：默认只显示关键温感，可切换显示全部
+ * real 仅在「手动刷新」时随请求带上（会短暂解除欺骗 ≈80ms），
+ * 定时轮询只刷新伪装值，不再触碰真实温度。
+ */
+var SHOW_ALL  = false;
+var SHOW_REAL = true;
+function apiTemps(real) {
+  var all = SHOW_ALL ? ' --all' : '';
+  var rl  = real     ? ' --real' : '';
+  if (HAS_KSU) return execJson('--temps' + all + rl);
+  return cgiJson('action=temps' + (SHOW_ALL ? '&all=1' : '') + (real ? '&real=1' : ''));
+}
+
+/* 给任意 Promise 加超时，避免 CGI 卡死时界面一直转圈 */
+function withTimeout(p, ms, label) {
+  return new Promise(function(resolve, reject) {
+    var t = setTimeout(function(){ reject(new Error((label || '请求') + '超时')); }, ms);
+    p.then(function(v){ clearTimeout(t); resolve(v); },
+           function(e){ clearTimeout(t); reject(e); });
+  });
+}
+
+function apiSet(pairs) {
+  if (HAS_KSU) {
+    var args = pairs.map(function(p){ return p[0] + '=' + sanitize(p[1]); }).join(' ');
+    return execJson('--set ' + args);
+  }
+  var body = pairs.map(function(p){ return p[0] + '=' + encodeURIComponent(p[1]); }).join('&');
+  /* query 里也要带 action=set：api.sh 是按 $QUERY_STRING 分派的，
+   * 只靠 POST body 会在分派阶段就被判成「未知操作」（见 cgiUrl 注释）。 */
+  return cgiJson('action=set', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: 'action=set&' + body
+  });
+}
+
+function apiLog() {
+  if (HAS_KSU) {
+    return ksuExec('sh ' + API_SCRIPT + ' --log').then(function(r){
+      var out = (r.stdout || '').trim();
+      var i = out.indexOf('{');
+      try { if (i >= 0) return JSON.parse(out.slice(i)); } catch (e) {}
+      return { success: true, log: out };
+    });
+  }
+  return cgiJson('action=log');
+}
+
+/* v2.8.13：全量导出日志（不做尾行截断），供「导出日志」按钮下载 */
+function apiLogFull() {
+  if (HAS_KSU) {
+    return ksuExec('sh ' + API_SCRIPT + ' --exportlog').then(function(r){
+      var out = (r.stdout || '').trim();
+      var i = out.indexOf('{');
+      try { if (i >= 0) return JSON.parse(out.slice(i)); } catch (e) {}
+      return { success: true, log: out };
+    });
+  }
+  return cgiJson('action=exportlog');
+}
+
+/* v2.10.0：诊断包 —— 后端在 /sdcard/Download 生成 tar.gz（或降级 txt），
+ * 返回产物路径。前端只负责触发与展示结果（不做下载，产物已在设备上）。 */
+function apiDiagpack() {
+  if (HAS_KSU) return execJson('--diagpack');
+  return cgiJson('action=diagpack');
+}
+
+function transportError(where) {
+  return function(e) {
+    var t = (e && e.message) ? e.message : String(e);
+    if (HAS_KSU) {
+      msg(where + '失败：' + t + '。可到管理器模块卡片点 Action 运行「status」排查。', false);
+    } else if (IS_HTTPD) {
+      msg(where + '失败：' + t + '。请在管理器中重新点 Action 启动内置服务器。', false);
+    } else {
+      msg(where + '失败：请通过 SukiSU/KernelSU 管理器打开本页（自动走 root 通道）；'
+        + '或先点模块 Action 启动内置服务器再访问 ' + HTTPD_BASE, false);
+    }
+  };
+}
+
+/* ════════════════ 渲染 ════════════════ */
+var TOGGLES = ['UNLOCK_FREQ','DISPLAY_PROTECT','PATCH_THERMAL','TOUCH_BOOST','GAME_PROTECT','SPOOF_BATT',
+               'UNLOCK_CDEV','OPPO_SHELL_TEMP','PATCH_EXTRA','HORAE_TESTMODE','DISABLE_ORMS',
+               'OPPO_GAUGE','STOP_SERVICES','REPLACE_ENCRYPTED','SHOW_REAL_TEMP','TOUCH_THREAD_BOOST'];
+var TEMPS   = ['SOC_T','SKIN_T','CAM_T','BATT_T','SHELL_PROC_T'];
+var LAST = null;
+var lastRefresh = Date.now();
+
+function renderChips(d) {
+  /* 温控欺骗（只读指示） */
+  var cs = $('chip-spoof');
+  cs.classList.remove('on','off');
+  if (d.state === 'on')      { cs.classList.add('on');  cs.querySelector('.cstate').textContent = '欺骗中'; }
+  else if (d.state === 'off'){ cs.classList.add('off'); cs.querySelector('.cstate').textContent = '已恢复'; }
+  else                       { cs.querySelector('.cstate').textContent = d.state || '未知'; }
+
+  /* 显示保护（只读指示） */
+  var cp = $('chip-protect');
+  cp.classList.remove('on','off');
+  var dp = (d.DISPLAY_PROTECT === '1' || d.DISPLAY_PROTECT === 1);
+  cp.classList.add(dp ? 'on' : 'off');
+  cp.querySelector('.cstate').textContent = dp ? '保护中' : '已关闭';
+
+  /* 可点击磁贴 */
+  document.querySelectorAll('.chip[data-key]').forEach(function(c){
+    var k = c.getAttribute('data-key');
+    var on = (d[k] === '1' || d[k] === 1);
+    c.classList.remove('on','off');
+    c.classList.add(on ? 'on' : 'off');
+    c.querySelector('.cstate').textContent = on ? '已启用' : '未启用';
+  });
+}
+
+function renderStats(d) {
+  $('st-spoof').textContent = (d.zones_spoofed === undefined) ? '—' : d.zones_spoofed;
+  $('st-total').textContent = (d.zones_total === undefined) ? '—' : d.zones_total;
+  $('st-emu').textContent = d.emul_temp ? '支持' : '不支持';
+  $('st-mount').textContent = (d.mounted === undefined) ? '—' : d.mounted + ' 项';
+}
+
+/* ════════════════ 模块冲突检测（v2.8）════════════════
+ * 只在页面加载与手动刷新时请求一次（模块列表很少变化），
+ * 不进 30 秒轮询，避免每次刷新都扫一遍 /data/adb/modules。
+ */
+function apiConflicts() {
+  if (HAS_KSU) return execJson('--conflicts');
+  return cgiJson('action=conflicts');
+}
+
+function renderConflicts(d) {
+  var box = $('conflict-box'), list = $('conflict-list');
+  if (!box || !list) return;
+  var items = (d && d.items) ? d.items : [];
+  if (!items.length) { box.style.display = 'none'; list.innerHTML = ''; return; }
+  var h = '';
+  items.forEach(function(it){
+    h += '<li class="' + (it.risk === 'high' ? 'hi' : 'mid') + '">'
+       + '<span class="cn">' + esc(it.name || it.id) + '</span>'
+       + '<span class="cv">' + esc(it.version || '') + '</span>'
+       + '<span class="cid">' + esc(it.id) + '</span>'
+       + '<p class="cnote">' + esc(it.note || '') + '</p></li>';
+  });
+  list.innerHTML = h;
+  box.style.display = '';
+}
+
+function loadConflicts(){
+  apiConflicts().then(renderConflicts).catch(function(){
+    var box = $('conflict-box');
+    if (box) box.style.display = 'none';
+  });
+}
+
+/* ════════════════ 场景预设档（v2.11.0）════════════════
+ * 一个预设 = 一组「场景化的配置档案」（presets/*.conf，由 common/presets.sh 解释）。
+ *
+ * 「已应用 / 当前最接近 X / 完全自定义」全部由后端算出的**匹配度**无状态推得 ——
+ * 前端刻意不记录"上次点了哪一档"。理由：用户随后手改任一开关时，若依赖记忆，
+ * 界面会继续显示「已应用 日用均衡」，那是撒谎；靠比对本轮立刻降为「自定义」。
+ */
+var PRESETS = [];
+
+/* ── shell 单引号引用：BLACKLIST 的值含空格与 *，不能走 sanitize() ──
+ * 现有 apiSet() 会 sanitize，把空格和 * 全剥掉 —— 那是为单 token 开关值设计的，
+ * 用在黑名单上会把值清空。所以黑名单走专用通道（--setlist），这里负责安全引用。 */
+function shq(s){ return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
+function apiSetList(value){
+  if (HAS_KSU) return execJson('--setlist ' + shq(value));
+  return cgiJson('action=setlist&v=' + encodeURIComponent(value));
+}
+
+function apiPresets(){
+  if (HAS_KSU) return execJson('--presets');
+  return cgiJson('action=presets');
+}
+function apiPreset(id){
+  if (HAS_KSU) return execJson('--preset ' + sanitize(id));
+  return cgiJson('action=preset&id=' + encodeURIComponent(id));
+}
+
+function renderPresets(d){
+  var box = $('presets'); if (!box) return;
+  var ps = (d && d.presets) || [];
+  if (!ps.length){
+    box.innerHTML = '<p class="pempty">未找到场景预设（模块内 presets/ 目录为空）</p>';
+    if ($('preset-hint')) $('preset-hint').textContent = '';
+    return;
+  }
+  PRESETS = ps;
+  var act = null;
+  ps.forEach(function(p){ if (p.active) act = p; });
+  box.innerHTML = ps.map(function(p){
+    var tags = String(p.tags || '').split(/\s+/).filter(function(x){ return !!x; });
+    var tagHtml = tags.map(function(t){ return '<em class="ptag">' + esc(t) + '</em>'; }).join('');
+    var meta = p.active
+      ? '<b class="pok">✓ 已应用</b> · ' + p.matched + '/' + p.total + ' 项'
+      : p.matched + '/' + p.total + ' 项匹配';
+    return '<button class="pcard risk-' + esc(p.risk || 'safe') + (p.active ? ' active' : '')
+         +   '" data-pid="' + esc(p.id) + '">'
+         +   '<span class="pico">' + esc(p.icon || '◻') + '</span>'
+         +   '<span class="pbody">'
+         +     '<span class="pname">' + esc(p.name) + tagHtml + '</span>'
+         +     '<span class="pdesc">' + esc(p.desc || '') + '</span>'
+         +     '<span class="pmeta">' + meta + '</span>'
+         +   '</span></button>';
+  }).join('');
+
+  if ($('preset-hint')){
+    var best = (d && d.best) || null;
+    if (act){
+      $('preset-hint').textContent = '当前：' + act.name + '（已应用）';
+    } else if (best && best.id){
+      var bp = null;
+      ps.forEach(function(p){ if (p.id === best.id) bp = p; });
+      $('preset-hint').textContent = bp
+        ? '当前：自定义 — 最接近「' + bp.name + '」' + best.matched + '/' + best.total + ' 项'
+        : '当前：自定义';
+    } else {
+      $('preset-hint').textContent = '当前：自定义';
+    }
+  }
+}
+
+function loadPresets(){
+  apiPresets().then(renderPresets).catch(function(e){
+    var box = $('presets');
+    if (box) box.innerHTML = '<p class="pempty">预设读取失败：'
+      + esc((e && e.message) || e) + '</p>';
+  });
+}
+
+/* 应用预设 → 三处联动刷新（状态磁贴 / 预设匹配度 / 温感树）。
+ * 延迟第二次刷新是必要的：配置写入是即时的，但模块的**状态机**每 5 秒才
+ * 重新决策一次（decide_state），MODE 改变后立刻读状态会读到旧值。 */
+function applyPreset(id){
+  var box = $('presets');
+  if (box) box.classList.add('busy');
+  apiPreset(id).then(function(d){
+    msg(d.message || (d.success ? '已应用' : '应用失败'), !!d.success);
+    if (d && d.success){
+      loadStatus(true);                 /* 配置值立刻变 */
+      loadPresets();                    /* 匹配度重算 → 该档变为「已应用」 */
+      if (TREE_ZONES) loadTree();        /* 树上的欺骗目标 / 参与范围随之更新 */
+      ZONES_SIG = ''; loadTemps();
+      setTimeout(function(){ loadStatus(true); loadTemps(); }, 6000);   /* 等状态机跟上 */
+    }
+  }).catch(transportError('应用预设')).then(function(){
+    if (box) box.classList.remove('busy');
+  });
+}
+
+function bindPresets(){
+  var box = $('presets'); if (!box) return;
+  box.onclick = function(e){
+    var el = e.target;
+    while (el && el !== box){
+      if (el.getAttribute && el.getAttribute('data-pid')){
+        applyPreset(el.getAttribute('data-pid')); return;
+      }
+      el = el.parentNode;
+    }
+  };
+}
+
+function renderState(d) {
+  $('devinfo').textContent = (d.model || '真我GT8') + ' · Android ' + (d.android || '?');
+  var big = $('s-state-big');
+  if (d.state === 'on') {
+    big.textContent = '运行中';
+    big.className = 'state-title run';
+  } else if (d.state === 'off') {
+    big.textContent = '已恢复';
+    big.className = 'state-title stop';
+  } else {
+    big.textContent = d.state || '未知';
+    big.className = 'state-title';
+  }
+  var r = document.querySelector('input[name=MODE][value="' + d.MODE + '"]');
+  if (r) r.checked = true;
+  /* v2.10.0：日志级别下拉（字符串值，非 0/1 开关） */
+  if ($('LOG_LEVEL')) $('LOG_LEVEL').value = d.LOG_LEVEL || 'info';
+  TOGGLES.forEach(function(k){ if ($(k)) $(k).checked = (d[k] === '1' || d[k] === 1); });
+  /* 欺骗温度：毫摄氏度 → 摄氏度显示 */
+  TEMPS.forEach(function(k){
+    if ($(k)) {
+      var v = parseInt(d[k], 10);
+      $(k).value = isNaN(v) ? '' : (v / 1000).toFixed(1);
+    }
+  });
+}
+
+function loadStatus(silent){
+  /* v2.8.13 修复：lastRefresh 只在成功分支更新 → 请求失败时 60s 阈值持续满足，
+   * 每 5s 心跳都会重试一次（请求风暴）。改为发起即更新时间戳，失败也按 60s 节流。 */
+  lastRefresh = Date.now();
+  apiStatus().then(function(d){
+    if (!d.success) { if (!silent) msg('读取失败：' + (d.message || '未知错误'), false); return; }
+    LAST = d;
+    renderState(d);
+    renderChips(d);
+    renderStats(d);
+    loadVersion();          /* v2.9.3：状态已带 version，徽标随状态一起刷新 */
+    if (!silent) msg('', true);
+  }).catch(silent ? function(){} : transportError('读取状态'));
+}
+
+/* ════════════════ 真实温度：手动刷新 + 缓存 ════════════════
+ * 真实温度只在用户主动操作（刷新按钮 / 下拉刷新 / 重试 / 重新读取）时请求；
+ * 30 秒的定时轮询只刷新伪装值，绝不触碰 emul_temp。
+ * REAL_CACHE 保存上一次成功读取的结果与时间，失败或刷新中都不会清空。
+ */
+var REAL_CACHE  = null;    // { ts: <ms>, map: { 温感名: 毫摄氏度 } }
+var REAL_STATE  = 'idle';  // idle | loading | ok | error
+var REAL_ERR    = '';
+var realBusy    = false;   // 防并发重复请求
+var ZONES_SIG   = '';      // 上一次渲染的 HTML，内容不变就不重绘（防闪烁）
+var LAST_ZONES  = [];
+var REAL_TIMEOUT = 12000;
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, function(c){
+    return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c];
+  });
+}
+function fmtAgo(ms) {
+  var s = Math.floor(ms / 1000);
+  if (s < 5)  return '刚刚';
+  if (s < 60) return s + ' 秒前';
+  var m = Math.floor(s / 60);
+  if (m < 60) return m + ' 分钟前';
+  return Math.floor(m / 60) + ' 小时前';
+}
+function realEnabled() {
+  var ck = $('SHOW_REAL_TEMP');
+  SHOW_REAL = ck ? ck.checked : true;
+  return SHOW_REAL;
+}
+
+/* 手动读取真实温度 —— 唯一的真实温度入口 */
+function refreshReal(force) {
+  if (realBusy) return;                       // 已有请求在飞，直接忽略
+  if (!realEnabled()) {
+    setRealState('error', '已关闭「允许读取真实温度」，勾选后才能读取');
+    return;
+  }
+  /* 2 秒冷却，避免连点产生多余请求（force 用于下拉/重试等明确意图） */
+  if (!force && REAL_STATE === 'ok' && REAL_CACHE && Date.now() - REAL_CACHE.ts < 2000) return;
+  loadTemps({ real: true });
+}
+
+function setRealState(st, err) {
+  REAL_STATE = st; REAL_ERR = err || '';
+  renderRealState();
+}
+
+function renderRealState() {
+  var el = $('tstate'); if (!el) return;
+  var bar = $('tbar');
+  if (bar) bar.className = 'tbar' + (REAL_STATE === 'loading' ? ' on' : '');
+
+  var html;
+  if (REAL_STATE === 'loading') {
+    html = '<i class="spin"></i>正在读取真实温度…（会短暂解除伪装，通常 0.1 秒、最长约 1 秒）';
+  } else if (REAL_STATE === 'ok' && REAL_CACHE) {
+    var t = new Date(REAL_CACHE.ts);
+    var hh = ('0' + t.getHours()).slice(-2), mm = ('0' + t.getMinutes()).slice(-2),
+        ss = ('0' + t.getSeconds()).slice(-2);
+    html = '真实温度更新于 ' + hh + ':' + mm + ':' + ss
+         + '（<span id="real-ago">' + fmtAgo(Date.now() - REAL_CACHE.ts) + '</span>）'
+         + (REAL_CACHE.partial ? ' · <em class="e">' + REAL_CACHE.partial + ' 个温感未读到（显示 --）</em>' : '')
+         + ' · <a href="#" id="real-again">重新读取</a>';
+  } else if (REAL_STATE === 'error') {
+    html = '<em class="e">读取失败：' + esc(REAL_ERR) + '</em>'
+         + '<button class="retry" id="btn-retry">重试</button>';
+  } else {
+    html = '真实温度尚未读取 · 点「读取真实温度」或下拉页面获取';
+  }
+  el.innerHTML = html;
+  /* 读取中禁用按钮，既提示状态又杜绝连点产生的重复请求 */
+  var br = $('btn-real');
+  if (br) {
+    br.disabled = (REAL_STATE === 'loading');
+    br.textContent = (REAL_STATE === 'loading') ? '读取中…' : '读取真实温度';
+  }
+  if ($('btn-retry'))  $('btn-retry').onclick  = function(){ refreshReal(true); };
+  if ($('real-again')) $('real-again').onclick = function(e){ e.preventDefault(); refreshReal(true); };
+}
+
+/* 渲染温感列表：整段 HTML 一次性替换，内容无变化则完全不碰 DOM（不闪、不空） */
+function renderZones(zones) {
+  var ul = $('zones'); if (!ul) return;
+  if (!zones.length) {
+    if (ZONES_SIG !== 'EMPTY') { ul.innerHTML = '<li class="empty">无温感数据</li>'; ZONES_SIG = 'EMPTY'; }
+    return;
+  }
+  var useReal = SHOW_REAL && !!REAL_CACHE;
+  var html = zones.map(function(z){
+    var spoof = c2v(z.temp);
+    var tHtml;
+    if (z.spoofed) {
+      if (useReal && REAL_CACHE.map[z.type] !== undefined) {
+        tHtml = '<b>' + spoof + '</b><i>/</i><span>' + c2v(REAL_CACHE.map[z.type]) + '</span><em>°C</em>';
+      } else {
+        tHtml = '<b>' + spoof + '</b><i>/</i><span class="nr">--</span><em>°C</em>';
+      }
+    } else {
+      tHtml = spoof + '<em>°C</em>';
+    }
+    return '<li><span class="ztype">' + esc(z.type) + '</span>'
+         + '<span class="ztemp">' + tHtml + '</span>'
+         + (z.spoofed ? '<span class="tag">欺骗中</span>' : '') + '</li>';
+  }).join('');
+  if (html === ZONES_SIG) return;
+  ZONES_SIG = html;
+  ul.innerHTML = html;
+}
+
+function applyZones(d, wantReal) {
+  var zones = d.zones || [];
+  LAST_ZONES = zones;
+  if (wantReal) {
+    var m = {}, n = 0, sp = 0;
+    zones.forEach(function(z){
+      if (z.real !== undefined && z.real !== null && z.real !== '') { m[z.type] = z.real; n++; }
+      if (z.spoofed) sp++;
+    });
+    if (n === 0 && sp > 0) {
+      /* 区分两种失败：后端关掉了探测 / 内核没有刷新读数（读到的仍与伪装值相同） */
+      setRealState('error', (d.real === 0)
+        ? '后端未返回真实温度（mode.conf 的 SHOW_REAL_TEMP 可能为 0）'
+        : '未读到真实值：内核没有及时刷新温感读数，稍等几秒再重试');
+    } else {
+      REAL_CACHE = { ts: Date.now(), map: m, partial: (sp > 0 && n < sp) ? (sp - n) : 0 };
+      setRealState('ok');
+    }
+  }
+  renderZones(zones);
+  /* v2.11.0：真实温度一变，温感树也要跟着显示「伪装/真实」两列 */
+  if (TREE_ZONES){ TREE_SIG = ''; renderTree(); }
+  if (d.total) {
+    $('temps-hint').textContent = SHOW_ALL
+      ? ('全部 ' + d.total + ' 个')
+      : ('关键 ' + d.shown + ' / 共 ' + d.total + ' 个');
+  }
+  $('btn-all').textContent = SHOW_ALL ? '只看关键温感' : '显示全部温感';
+}
+
+/* opt.real = true 才会去取真实温度（仅手动触发） */
+function loadTemps(opt) {
+  opt = opt || {};
+  var wantReal = !!opt.real;
+  if (wantReal) {
+    if (realBusy) return;
+    realBusy = true;
+    setRealState('loading');
+  }
+  withTimeout(apiTemps(wantReal), REAL_TIMEOUT, '读取温度')
+    .then(function(d){
+      if (wantReal) realBusy = false;
+      if (!d || !d.success) throw new Error((d && d.message) || '后端返回失败');
+      applyZones(d, wantReal);
+    })
+    .catch(function(e){
+      if (wantReal) {
+        realBusy = false;
+        setRealState('error', (e && e.message) ? e.message : String(e));
+      }
+      /* 失败时不清空已有列表与缓存，界面保持上一次的内容 */
+    });
+}
+
+function collectPairs(){
+  var pairs = [];
+  pairs.push(['MODE', (document.querySelector('input[name=MODE]:checked') || {value:'dynamic'}).value]);
+  /* v2.10.0：日志级别（下拉，字符串值） */
+  if ($('LOG_LEVEL')) pairs.push(['LOG_LEVEL', $('LOG_LEVEL').value]);
+  TOGGLES.forEach(function(k){
+    if ($(k)) pairs.push([k, $(k).checked ? '1' : '0']);
+  });
+  /* 欺骗温度：摄氏度输入 → 毫摄氏度存储 */
+  TEMPS.forEach(function(k){
+    if (!$(k)) return;
+    var v = parseFloat($(k).value);
+    if (!isNaN(v)) pairs.push([k, String(Math.round(v * 1000))]);
+  });
+  return pairs;
+}
+
+function save(){
+  apiSet(collectPairs()).then(function(d){
+    msg(d.message || '已保存', !!d.success);
+    setTimeout(function(){ loadStatus(); loadTemps(); }, 1500);
+  }).catch(transportError('保存'));
+}
+
+/* 磁贴点击 = 立即切换该开关 */
+/* ════════════════ v2.10.0 诊断包 ════════════════
+ * 收集在设备端完成（root 通道），产物直接落在 /sdcard/Download，
+ * 前端只展示路径与体积。收集期间日志量较大，按钮置灰防连点。
+ */
+function exportDiagpack(){
+  var box = $('logbox');
+  var btn = $('btn-diagpack');
+  if (btn && btn.disabled) return;
+  if (btn) { btn.disabled = true; btn.textContent = '收集打包中…'; }
+  box.style.display = 'block';
+  box.textContent = '正在收集设备信息、配置、运行状态、温感读数与日志…\n（通常 1~5 秒）';
+
+  apiDiagpack().then(function(d){
+    if (d && d.success && d.path) {
+      var kb = d.size ? Math.round(d.size / 1024) : 0;
+      box.textContent = '✔ 诊断包已导出\n\n'
+        + '路径：' + d.path + '\n'
+        + '大小：' + kb + ' KB\n\n'
+        + '用文件管理器到 /sdcard/Download 取走即可（可直接分享给维护者）。\n'
+        + '包内 00-README.txt 列出了各节内容。';
+    } else {
+      box.textContent = '✘ 导出失败：' + ((d && d.message) || '未知错误');
+    }
+  }).catch(function(e){
+    box.textContent = '✘ 导出失败：' + ((e && e.message) || e);
+  }).then(function(){
+    if (btn) { btn.disabled = false; btn.textContent = '导出诊断包'; }
+  });
+}
+
+function bindChips(){  document.querySelectorAll('.chip[data-key]').forEach(function(c){
+    c.onclick = function(){
+      if (!LAST) return;
+      var k = c.getAttribute('data-key');
+      var on = (LAST[k] === '1' || LAST[k] === 1);
+      apiSet([[k, on ? '0' : '1']]).then(function(){
+        msg((on ? '已关闭 ' : '已开启 ') + c.querySelector('.clabel').textContent, true);
+        setTimeout(function(){ loadStatus(); }, 1200);
+      }).catch(transportError('切换'));
+    };
+  });
+}
+
+/* 亮度异常一键恢复 */
+function safeRestore(){
+  var keys = ['UNLOCK_CDEV','OPPO_SHELL_TEMP','PATCH_EXTRA','HORAE_TESTMODE','DISABLE_ORMS','OPPO_GAUGE','STOP_SERVICES'];
+  var pairs = keys.map(function(k){ return [k, '0']; });
+  pairs.push(['DISPLAY_PROTECT', '1']);
+  pairs.push(['SKIN_T', '29500']);
+  apiSet(pairs).then(function(d){
+    msg(d.success ? '已恢复亮度安全预设，等 10 秒看亮度' : (d.message || '操作失败'), !!d.success);
+    keys.forEach(function(k){ if ($(k)) $(k).checked = false; });
+    if ($('DISPLAY_PROTECT')) $('DISPLAY_PROTECT').checked = true;
+    if ($('SKIN_T')) $('SKIN_T').value = '29.5';
+    setTimeout(loadStatus, 1500);
+  }).catch(transportError('恢复'));
+}
+
+/* ════════════════ 诊断 ════════════════ */
+function showLog(){
+  var box = $('logbox');
+  box.style.display = 'block';
+  box.textContent = '读取中…';
+  apiLog().then(function(d){
+    box.textContent = d.success ? (d.log || '(日志为空)') : (d.message || '读取失败');
+    box.scrollTop = box.scrollHeight;
+  }).catch(function(e){ box.textContent = '读取失败：' + ((e && e.message) || e); });
+}
+
+/* v2.8.13：把全量日志下载为文本文件，便于离线排查 */
+function downloadText(filename, text){
+  try {
+    var blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+    return true;
+  } catch (e) {
+    return false;   /* 旧 WebView 不支持 Blob 下载 → 回退到 logbox 手动复制 */
+  }
+}
+
+function exportLog(){
+  var box = $('logbox');
+  box.style.display = 'block';
+  box.textContent = '导出到 /sdcard/Download …';
+  /* 优先走 root 后端把日志直接复制到 /sdcard/Download（浏览器下载目录不可控）；
+   * 失败（无 sdcard 权限等）再降级为浏览器 Blob 下载。 */
+  var done = function(d){
+    if (d && d.success && d.path) { box.textContent = '已导出到 ' + d.path; return; }
+    fallbackBlob(box);
+  };
+  if (HAS_KSU) {
+    ksuExec('sh ' + API_SCRIPT + ' --save2download').then(function(r){
+      var out = (r.stdout || '').trim(); var i = out.indexOf('{');
+      try { if (i >= 0) { done(JSON.parse(out.slice(i))); return; } } catch (e) {}
+      fallbackBlob(box);
+    }).catch(function(e){ fallbackBlob(box); });
+  } else {
+    cgiJson('action=save2download').then(done).catch(function(){ fallbackBlob(box); });
+  }
+}
+
+/* 降级：把全量日志交给浏览器下载（下载目录由浏览器决定） */
+function fallbackBlob(box){
+  apiLogFull().then(function(d){
+    var txt = d.success ? (d.log || '') : '';
+    if (!txt) { box.textContent = '日志为空，无可导出'; return; }
+    if (downloadText('gt8_thermal.log', txt)) {
+      box.textContent = '已下载 gt8_thermal.log（浏览器默认下载目录，' + txt.length + ' 字符）';
+    } else {
+      box.textContent = txt;   /* 再降级：显示在框内，手动复制 */
+    }
+  }).catch(function(e){ box.textContent = '导出失败：' + ((e && e.message) || e); });
+}
+
+function verify(){
+  var box = $('logbox');
+  box.style.display = 'block';
+  box.textContent = '校验中…';
+  if (HAS_KSU) {
+    ksuExec('sh ' + API_SCRIPT + ' --verify').then(function(r){
+      box.textContent = (r.stdout || '').trim() || '(无输出)';
+    }).catch(function(e){ box.textContent = '校验失败：' + ((e && e.message) || e); });
+  } else {
+    box.textContent = '校验需要 root 通道：请通过管理器打开本页。';
+  }
+}
+
+function runDoctor(){
+  var box = $('logbox');
+  box.style.display = 'block';
+  box.textContent = '体检中…（约 1-2 秒）';
+  if (HAS_KSU) {
+    ksuExec('sh ' + MODDIR + '/action.sh doctor').then(function(r){
+      box.textContent = (r.stdout || '').trim() || '(无输出)';
+    }).catch(function(e){ box.textContent = '体检失败：' + ((e && e.message) || e); });
+  } else {
+    cgiJson('action=doctor').then(function(d){
+      box.textContent = d && d.report ? d.report : JSON.stringify(d);
+    }).catch(function(e){ box.textContent = '体检失败：' + e; });
+  }
+}
+
+function runDiag(){
+  var box = $('logbox');
+  box.style.display = 'block';
+  box.textContent = '诊断中…（约 2-5 秒）';
+  if (HAS_KSU) {
+    ksuExec('sh ' + MODDIR + '/action.sh diag').then(function(r){
+      box.textContent = (r.stdout || '').trim() || '(无输出)';
+    }).catch(function(e){ box.textContent = '诊断失败：' + ((e && e.message) || e); });
+  } else {
+    box.textContent = '诊断需要 root 通道：请通过管理器打开本页。';
+  }
+}
+
+function toggleTemps(){
+  SHOW_ALL = !SHOW_ALL;
+  ZONES_SIG = '';               /* 切换显示范围需强制重绘 */
+  loadTemps();                  /* 只刷伪装值，真实温度沿用缓存 */
+}
+
+/* ════════════════ 温感树（v2.11.0）════════════════
+ * 数据模型（后端 get_temps 每次请求顺带算好，前端只做展示）：
+ *   每个温感 = 一个叶子，带 type / temp / real / spoofed / grp / cls / tgt / ex
+ *     grp  所属功能域（cpu/gpu/batt/…）—— 分类节点由它聚合出来
+ *     cls  欺骗类别（soc/skin/cam/batt）—— 决定用哪个 *_T 目标值
+ *     tgt  该类别的目标欺骗值（毫摄氏度）
+ *     ex   本次「为什么没被骗到」：bl 命中黑名单 / nobatt 电池欺骗已关 / noemul 内核不支持
+ *   节点关系：根 → 分类节点（由 grp 聚合）→ 叶子（单个温感）。没有更深的层级，
+ *   因为内核暴露的 thermal_zone 本身就是平铺的，硬造第三层只会增加噪声。
+ *
+ * 分类映射刻意放在**后端**：名称→类别这类匹配规则若前后端各写一套，
+ * 迟早走偏（本模块在 GPU 封顶的重复实现上就吃过这个亏）。
+ * 前端只负责「分组顺序 + 中文标签 + 图标」这类纯展示信息。
+ */
+var GRP = {
+  cpu:    { n:'CPU 集群',      i:'🧠', o:10 },
+  gpu:    { n:'GPU',           i:'🎮', o:20 },
+  batt:   { n:'电池 / 充电',   i:'🔋', o:30 },
+  shell:  { n:'外壳 / 皮肤',   i:'📱', o:40 },
+  cam:    { n:'相机',          i:'📷', o:50 },
+  mem:    { n:'内存 / 存储',   i:'💾', o:60 },
+  rf:     { n:'射频 / 网络',   i:'📡', o:70 },
+  av:     { n:'音视频',        i:'🎬', o:80 },
+  pmic:   { n:'电源管理',      i:'⚡', o:90 },
+  disp:   { n:'显示',          i:'🖥', o:100 },
+  sensor: { n:'传感器 / 主板', i:'🌡', o:110 },
+  other:  { n:'其他',          i:'◻', o:200 }
+};
+var CLS = { soc:'SoC', skin:'外壳', cam:'相机', batt:'电池' };
+var EXN = { bl:'已屏蔽', nobatt:'电池欺骗已关', noemul:'内核不支持 emul_temp' };
+
+var TREE_ZONES = null;      /* null = 尚未加载（懒加载，避免每次开页都拉 83 个温感） */
+var TREE_OPEN  = {};        /* 展开的分类集合 */
+var TREE_SIG   = '';        /* 上次渲染的 HTML，内容不变就不碰 DOM（防闪烁） */
+
+function apiTempsAll(){
+  if (HAS_KSU) return execJson('--temps --all');
+  return cgiJson('action=temps&all=1');
+}
+
+function loadTree(){
+  var ul = $('tree'); if (!ul) return;
+  if (!TREE_ZONES) ul.innerHTML = '<li class="empty">加载中…</li>';
+  withTimeout(apiTempsAll(), REAL_TIMEOUT, '读取温感树').then(function(d){
+    if (!d || !d.success) throw new Error((d && d.message) || '后端返回失败');
+    TREE_ZONES = d.zones || [];
+    TREE_SIG = '';                       /* 数据变了，强制重绘 */
+    renderTree();
+    if ($('tree-hint')) $('tree-hint').textContent = '共 ' + TREE_ZONES.length + ' 个温感';
+  }).catch(function(e){
+    ul.innerHTML = '<li class="empty">温感树读取失败：' + esc((e && e.message) || e) + '</li>';
+  });
+}
+
+function renderTree(){
+  var ul = $('tree'); if (!ul || !TREE_ZONES) return;
+  var groups = {}, order = [];
+  TREE_ZONES.forEach(function(z){
+    var g = z.grp || 'other';
+    if (!groups[g]){ groups[g] = []; order.push(g); }
+    groups[g].push(z);
+  });
+  order.sort(function(a, b){
+    return (GRP[a] || GRP.other).o - (GRP[b] || GRP.other).o;
+  });
+  var useReal = SHOW_REAL && !!REAL_CACHE;
+
+  var html = order.map(function(g){
+    var gi = GRP[g] || GRP.other;
+    var list = groups[g];
+    var spoofed = 0, maxv = null, allBl = true;
+    list.forEach(function(z){
+      if (z.spoofed) spoofed++;
+      var t = (useReal && REAL_CACHE.map[z.type] !== undefined)
+        ? REAL_CACHE.map[z.type] : z.temp;
+      if (typeof t === 'number' && (maxv === null || t > maxv)) maxv = t;
+      if (z.ex !== 'bl') allBl = false;
+    });
+    var open = !!TREE_OPEN[g];
+    var agg = '欺骗 ' + spoofed + '/' + list.length
+            + (maxv === null ? '' : ' · 最高 ' + c2v(maxv) + '°C');
+    var h = '<li class="gnode' + (open ? ' open' : '') + '">'
+          +   '<div class="ghead" data-grp="' + g + '">'
+          +     '<span class="gfold">' + (open ? '▾' : '▸') + '</span>'
+          +     '<span class="gico">' + gi.i + '</span>'
+          +     '<span class="gname">' + esc(gi.n) + '</span>'
+          +     '<span class="gagg">' + agg + '</span>'
+          +     '<button class="gbl" data-gbl="' + g + '" data-on="' + (allBl ? '1' : '0') + '">'
+          +       (allBl ? '全组解除' : '全组屏蔽') + '</button>'
+          +   '</div>';
+    if (open){
+      h += '<ul class="gleaf">' + list.map(function(z){
+        var spoof = c2v(z.temp);
+        var tHtml;
+        if (z.spoofed){
+          if (useReal && REAL_CACHE.map[z.type] !== undefined){
+            tHtml = '<b>' + spoof + '</b><i>/</i><span>' + c2v(REAL_CACHE.map[z.type]) + '</span>';
+          } else {
+            tHtml = '<b>' + spoof + '</b><i>/</i><span class="nr">--</span>';
+          }
+        } else {
+          tHtml = spoof;
+        }
+        var blOn = (z.ex === 'bl');
+        var exn  = z.ex ? (EXN[z.ex] || z.ex) : '';
+        return '<li class="lnode' + (blOn ? ' bl' : '') + '">'
+             +   '<span class="ltype">' + esc(z.type) + '</span>'
+             +   '<span class="ltemp">' + tHtml + '<em>°C</em></span>'
+             +   '<span class="lcls c-' + esc(z.cls) + '">' + esc(CLS[z.cls] || z.cls || '') + '</span>'
+             +   (exn ? '<span class="lex">' + esc(exn) + '</span>' : '')
+             +   '<button class="lbl" data-bl="' + esc(z.type) + '">'
+             +     (blOn ? '解除' : '屏蔽') + '</button>'
+             + '</li>';
+      }).join('') + '</ul>';
+    }
+    return h + '</li>';
+  }).join('');
+
+  if (html === TREE_SIG) return;
+  TREE_SIG = html;
+  ul.innerHTML = html;
+}
+
+function toggleGroup(g){
+  if (TREE_OPEN[g]) delete TREE_OPEN[g]; else TREE_OPEN[g] = 1;
+  TREE_SIG = ''; renderTree();
+}
+
+function foldAllTree(){
+  TREE_OPEN = {};
+  TREE_SIG = ''; renderTree();
+}
+
+/* ── 黑名单：树的交互与配置的联动 ──
+ * 增删都基于**原始通配符列表**（get_status 带出的 BLACKLIST），而不是由树上
+ * 命中的温感反推 —— 否则那些当前没有对应温感的规则会在一次操作后被丢掉。 */
+function blList(){
+  if (!LAST || !LAST.BLACKLIST) return [];
+  return String(LAST.BLACKLIST).split(/\s+/).filter(function(x){ return !!x; });
+}
+
+function applyBl(arr){
+  var v = arr.join(' ');
+  apiSetList(v).then(function(d){
+    if (!d || !d.success){ msg((d && d.message) || '更新失败', false); return; }
+    if (LAST) LAST.BLACKLIST = v;      /* 乐观更新，界面不必等下一轮状态刷新 */
+    msg(d.message || '黑名单已更新', true);
+    loadTree();                        /* 树立即反映新的排除状态 */
+    loadPresets();                     /* 匹配度变化 → 预设卡变「自定义」 */
+    ZONES_SIG = ''; loadTemps();       /* 平面温度列表同步 */
+  }).catch(transportError('更新黑名单'));
+}
+
+function toggleZoneBl(type){
+  var arr = blList(), i = arr.indexOf(type);
+  if (i >= 0) arr.splice(i, 1); else arr.push(type);
+  applyBl(arr);
+}
+
+/* on=true 整组加入黑名单，on=false 整组移出（各自的类型名逐个增删，
+ * 不引入组级通配符 —— 组是展示概念，不该泄漏进配置语义） */
+function toggleGroupBl(g, on){
+  if (!TREE_ZONES) return;
+  var arr = blList();
+  TREE_ZONES.forEach(function(z){
+    if ((z.grp || 'other') !== g) return;
+    var i = arr.indexOf(z.type);
+    if (on && i < 0) arr.push(z.type);
+    if (!on && i >= 0) arr.splice(i, 1);
+  });
+  applyBl(arr);
+}
+
+function bindTree(){
+  var ul = $('tree'); if (!ul) return;
+  ul.onclick = function(e){
+    var el = e.target;
+    while (el && el !== ul){
+      if (el.getAttribute){
+        /* 开关优先：它们嵌在分类头里，不先拦就会被判成"点了分类头" */
+        var bl = el.getAttribute('data-bl');
+        if (bl){ toggleZoneBl(bl); return; }
+        var gb = el.getAttribute('data-gbl');
+        if (gb){ toggleGroupBl(gb, el.getAttribute('data-on') !== '1'); return; }
+        var gp = el.getAttribute('data-grp');
+        if (gp){ toggleGroup(gp); return; }
+      }
+      el = el.parentNode;
+    }
+  };
+}
+
+/* ════════════════ 自动刷新 ════════════════
+ * 只刷新状态与伪装值；真实温度不会在这里被请求（见 refreshReal）
+ *
+ * v2.8.13 省电：心跳 1s → 5s、自动刷新 30s → 60s。
+ * 原来每秒唤醒一次 WebView，只是为了更新「数据刷新于 N 秒前」这一行文本，
+ * 而 N 的显示精度到秒并没有实际意义；请求频率减半则直接省掉一半的
+ * CGI fork（每次请求都要起一个 shell 去读 sysfs / 拼 JSON）。
+ * 页面不可见（document.hidden）时依旧完全不跑。
+ */
+setInterval(function(){
+  if (document.hidden) return;
+  var s = Math.floor((Date.now() - lastRefresh) / 1000);
+  var el = $('refresh-info');
+  if (el) el.textContent = '数据刷新于 ' + s + ' 秒前';
+  /* 只更新"多久之前"这一个文本节点，不重绘整块，避免闪烁 */
+  var ag = $('real-ago');
+  if (ag && REAL_STATE === 'ok' && REAL_CACHE) ag.textContent = fmtAgo(Date.now() - REAL_CACHE.ts);
+  if (s >= 60) {
+    loadStatus(true);
+    loadTemps();
+    /* 温感树只在用户已经加载过时才跟着刷新（懒加载的延续），
+     * 且同样受 document.hidden 闸门保护 —— 页面不可见时整段不跑。 */
+    if (TREE_ZONES) loadTree();
+  }
+}, 5000);
+
+/* ════════════════ 下拉刷新（仅触发真实温度读取）════════════════ */
+(function bindPull(){
+  var startY = 0, dist = 0, pulling = false, TH = 64;
+  function setPtr(px, txt){
+    var p = $('ptr'); if (!p) return;
+    p.style.height = px + 'px';
+    if (txt && $('ptr-t')) $('ptr-t').textContent = txt;
+  }
+  function tip(){
+    if (realBusy) return '读取中…';
+    return dist >= TH ? '↑ 松开读取真实温度' : '↓ 下拉读取真实温度';
+  }
+  window.addEventListener('touchstart', function(e){
+    if (!e.touches || e.touches.length !== 1) return;
+    if ((window.scrollY || document.documentElement.scrollTop || 0) > 2) return;
+    startY = e.touches[0].clientY; dist = 0; pulling = true;
+  }, { passive: true });
+  window.addEventListener('touchmove', function(e){
+    if (!pulling) return;
+    var d = e.touches[0].clientY - startY;
+    dist = d > 0 ? Math.min(d, 110) : 0;
+    setPtr(dist, tip());
+  }, { passive: true });
+  window.addEventListener('touchend', function(){
+    if (!pulling) return;
+    var d = dist; pulling = false; dist = 0;
+    setPtr(0);
+    if (d >= TH) refreshReal(true);
+  }, { passive: true });
+  window.addEventListener('touchcancel', function(){
+    pulling = false; dist = 0; setPtr(0);
+  }, { passive: true });
+})();
+
+/* ════════════════ 启动 ════════════════ */
+$('btn-save').onclick = save;
+/* 顶部「刷新」= 刷状态 + 顺带读取一次真实温度（属于用户主动操作） */
+$('btn-refresh').onclick = function(){ loadStatus(); refreshReal(true); loadConflicts(); loadPresets(); };
+$('btn-safe').onclick = safeRestore;
+$('btn-log').onclick = showLog;
+$('btn-export').onclick = exportLog;
+$('btn-verify').onclick = verify;
+$('btn-doctor').onclick = runDoctor;
+$('btn-diag').onclick = runDiag;
+$('btn-diagpack').onclick = exportDiagpack;
+$('btn-all').onclick = toggleTemps;
+$('btn-real').onclick = function(){ refreshReal(true); };
+/* v2.11.0：场景预设 + 温感树 */
+$('btn-tree-load').onclick = loadTree;
+$('btn-tree-fold').onclick = foldAllTree;
+bindPresets();
+bindTree();
+/* 真实温度开关：写入配置；勾选上时按用户意图读一次，取消勾选只重绘不请求 */
+var cr = $('SHOW_REAL_TEMP');
+if (cr) cr.onchange = function(){
+  apiSet([['SHOW_REAL_TEMP', cr.checked ? '1' : '0']])
+    .then(function(){
+      realEnabled();
+      renderZones(LAST_ZONES);
+      if (TREE_ZONES){ TREE_SIG = ''; renderTree(); }
+      if (SHOW_REAL) refreshReal(true); else renderRealState();
+    })
+    .catch(function(){
+      realEnabled();
+      renderZones(LAST_ZONES);
+      if (TREE_ZONES){ TREE_SIG = ''; renderTree(); }
+      renderRealState();
+    });
+};
+bindChips();
+
+$('chan').textContent = HAS_KSU ? '通道：root（ksu.exec）'
+                      : IS_HTTPD ? '通道：内置 httpd'
+                      : '通道：未连接';
+loadStatus();
+loadConflicts();      /* 模块列表很少变化，只在加载/手动刷新时查一次 */
+loadPresets();        /* v2.11.0：场景预设档（含当前匹配度） */
+loadVersion();        /* 版本徽标从 module.prop 实时读，便于确认刷入的是哪一版 */
+loadTemps();          /* 首次只刷伪装值，真实温度等用户手动触发 */
+renderRealState();
+/* 温感树刻意不在启动时加载 —— 83 个温感的请求留给用户显式点击（省电） */
+</script>
+
+</body>
+</html>

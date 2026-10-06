@@ -1,0 +1,54 @@
+#!/sbin/sh
+# ═══════════════════════════════════════════════════════════════
+#  Recovery 刷入入口（TWRP / OrangeFox / PBRP）
+#  用法: update-binary <recovery-api-version> <fd> <zipfile>
+#  注意: SukiSU / KernelSU 推荐用管理器 App「安装本地模块」，
+#        本脚本仅作为 Recovery 环境的兜底路径。
+# ═══════════════════════════════════════════════════════════════
+
+ui_print() { echo "$@"; }
+
+ZIP="$3"
+MODULE_ID="realme-gt8-sukisu-thermal-remove"
+
+ui_print "════════════════════════════════════════"
+ui_print " 真我GT8 SukiSU 温控移除模块"
+ui_print "════════════════════════════════════════"
+
+[ -n "$ZIP" ] || { ui_print "! 未取到 zip 路径"; exit 1; }
+
+# 优先交给 ksud 处理（若 /data 已挂载且 ksud 存在）
+if [ -x /data/adb/ksud ]; then
+    ui_print "- 调用 ksud 安装模块"
+    /data/adb/ksud module install "$ZIP"
+    _rc=$?
+    if [ "$_rc" = "0" ]; then
+        ui_print "✔ 安装完成，重启生效"
+        exit 0
+    fi
+    ui_print "! ksud 返回 $_rc，回退到手动解包"
+fi
+
+# 回退：手动解包到 modules_update，下次开机由 ksud 接管
+for _m in /data /metadata; do
+    [ -d "$_m" ] || mount "$_m" 2>/dev/null
+done
+
+DEST="/data/adb/modules_update/$MODULE_ID"
+mkdir -p "$DEST" 2>/dev/null || { ui_print "! 无法创建 $DEST"; exit 1; }
+
+if command -v unzip >/dev/null 2>&1; then
+    unzip -o "$ZIP" -x 'META-INF/*' 'README.md' -d "$DEST" >/dev/null 2>&1
+else
+    ui_print "! Recovery 缺少 unzip，无法解包"
+    ui_print "  请用 SukiSU 管理器 → 模块 → 安装本地模块"
+    rmdir "$DEST" 2>/dev/null
+    exit 1
+fi
+
+chmod -R 0755 "$DEST" 2>/dev/null
+[ -f "$DEST/module.prop" ] || { ui_print "! 解包异常，缺少 module.prop"; exit 1; }
+
+ui_print "✔ 已解包至 $DEST"
+ui_print "  重启后由 SukiSU 自动接管生效"
+exit 0

@@ -1,0 +1,43 @@
+# 模块追加的系统属性（KernelSU 会在开机时通过 resetprop 载入）
+#
+# 仅设置确认无害的调试类属性；厂商温控的开关属性各 ROM 命名不一，
+# 强行写入未知属性可能引发异常，故不在此处硬编码，改由脚本运行时处理。
+
+persist.vendor.thermal.debug=0
+
+# ─────────────────────────────────────────────────────────────
+# 显示 / 触控端到端延迟调优（v2.8.3 并入，来源「超频响应 8.3（高通）」）
+# KernelSU 在 post-fs-data 阶段用 resetprop 注入，早于 SurfaceFlinger /
+# Adreno / HWUI / InputReader 启动，故开机即生效。
+# ⚠ 这些属性属于全局 display 属性，必须【重启】后才被消费方读取；
+#    若与其他性能/显示类模块写了相同的 debug.sf.* 会互相覆盖（最后写入者获胜）。
+# 实测有花屏/掉帧/偏色请删掉下方整段并重启。
+# ─────────────────────────────────────────────────────────────
+# Adreno 后端线程不做 CPU 亲和（降低 GPU 提交延迟）
+debug.adreno.disable_backend_affinity=true
+# SurfaceFlinger 启用 ADPF CPU 提频提示（渲染期更高 CPU 优先级）
+debug.sf.enable_adpf_cpu_hint=true
+# HWUI 使用 ADPF hint 管理器（UI 线程提频）
+debug.hwui.use_hint_manager=true
+# SF 把相位偏移当作时长处理（改呈现时序模型）
+debug.sf.use_phase_offsets_as_durations=1
+# 支持更高倍率帧率（让高刷逻辑不被封顶；面板本身须支持高刷）
+debug.sf.frame_rate_multiple_threshold=200
+# InputReader 点按/拖拽间隔提示（更跟手，真正与触控相关的一条）
+TapDragInterval=1
+
+# ─────────────────────────────────────────────────────────────
+# 以下两条【默认未启用】（保持注释）—— v2.8.6 评审「慕容 ColorOS 附加模块」
+# 时收录，与上一条同属 AOSP PointerGestureClassifier 的手势判定参数：
+#   QuietInterval      默认 100ms   手势切换前的静默等待   → 0 表示不等待
+#   DragMinSwitchSpeed 默认 50.0px/s 拖拽中切换主指针的阈值 → 拉满即不再切换
+# 为什么先不开：system.prop 是开机注入、无法随 MODE=off 撤销；而且与
+# TapDragInterval=1 叠加后「轻点后立刻拖拽」会更敏感，可能增加误触。
+# 想试请先手动验证（无需改包、无需重启即可体感）：
+#   su -c 'dumpsys input' | sed -n '/PointerGesture/,/Viewport/p'   # 改前读数
+#   su -c 'resetprop QuietInterval 0.0ms; resetprop DragMinSwitchSpeed 99999.0px/s'
+#   su -c 'dumpsys input' | sed -n '/PointerGesture/,/Viewport/p'   # 确认已生效
+# 确认数值变化且手感可接受后，再去掉下面两行的 # 号并重启。
+# 出现误触/手势错乱：把这三行（TapDragInterval 一并）整段删除并重启。
+#QuietInterval=0.0ms
+#DragMinSwitchSpeed=99999.0px/s

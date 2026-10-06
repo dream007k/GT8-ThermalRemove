@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Thermal Horae Extreme - 配置面板</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔥 Thermal Horae Extreme</h1>
+            <p class="version">v6.0.1</p>
+        </header>
+
+        <div class="status-bar">
+            <span id="current-mode">加载中...</span>
+            <button id="refresh-btn" class="refresh-btn" onclick="loadConfig()" title="刷新状态" aria-label="刷新配置">🔄</button>
+        </div>
+
+        <div class="tabs" role="tablist">
+            <button class="tab-btn active" role="tab" aria-selected="true" aria-controls="tab-static" onclick="switchTab(event, 'static')">静态模式</button>
+            <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-dynamic" onclick="switchTab(event, 'dynamic')">动态模式</button>
+        </div>
+
+        <div id="tab-static" class="tab-content active" role="tabpanel">
+            <h2>静态模式</h2>
+            <p class="desc">手动设置Horae温控进程的固定状态，不进行自动检测</p>
+            
+            <div class="option-group">
+                <button class="option-btn" id="static-enable" onclick="setStatic(1)" aria-label="开启Horae温控">
+                    <div class="option-icon">✅</div>
+                    <div class="option-text">
+                        <strong>开启Horae</strong>
+                        <small>启用温控，适合日常使用和拍照</small>
+                    </div>
+                </button>
+                
+                <button class="option-btn" id="static-disable" onclick="setStatic(0)" aria-label="关闭Horae温控">
+                    <div class="option-icon">❌</div>
+                    <div class="option-text">
+                        <strong>关闭Horae</strong>
+                        <small>禁用温控，释放性能</small>
+                    </div>
+                </button>
+            </div>
+        </div>
+
+        <div id="tab-dynamic" class="tab-content" role="tabpanel">
+            <h2>动态模式</h2>
+            <p class="desc">根据当前场景自动控制Horae进程</p>
+            
+            <div class="rule-list">
+                <div class="rule-item priority-high">
+                    <span class="rule-icon">📸</span>
+                    <div class="rule-text">
+                        <strong>相机应用 <span class="priority-badge">优先级最高</span></strong>
+                        <small>检测到相机应用时 → 开启温控</small>
+                    </div>
+                </div>
+                
+                <div class="rule-item">
+                    <span class="rule-icon">🔌</span>
+                    <div class="rule-text">
+                        <strong>充电状态</strong>
+                        <small>设备充电时 → 关闭温控</small>
+                    </div>
+                </div>
+                
+                <div class="rule-item">
+                    <span class="rule-icon">🎮</span>
+                    <div class="rule-text">
+                        <strong>游戏应用</strong>
+                        <small>检测到游戏应用时 → 关闭温控</small>
+                    </div>
+                </div>
+                
+                <div class="rule-item">
+                    <span class="rule-icon">📱</span>
+                    <div class="rule-text">
+                        <strong>其他情况</strong>
+                        <small>默认状态 → 开启温控</small>
+                    </div>
+                </div>
+            </div>
+            
+            <button class="option-btn primary" id="dynamic-enable" onclick="setDynamic()" aria-label="启用动态模式">
+                <div class="option-icon">🔄</div>
+                <div class="option-text">
+                    <strong>启用动态模式</strong>
+                    <small>自动根据场景控制温控</small>
+                </div>
+            </button>
+        </div>
+
+        <footer>
+            <div id="message" class="message" role="alert"></div>
+            <p class="footer-text">配置保存后将立即生效 · 轮询周期: 3秒</p>
+        </footer>
+    </div>
+
+    <!-- 全局加载遮罩 -->
+    <div id="loading-overlay" class="loading-overlay">
+        <div class="loading-spinner"></div>
+        <p>正在保存配置...</p>
+    </div>
+
+    <script>
+        const MODULE_ID = 'thermal_horae_extreme';
+        const API_PATH = `/data/adb/modules/${MODULE_ID}/webroot/cgi-bin/api.sh`;
+        const LOCAL_API = 'http://127.0.0.1:37654/cgi-bin/api.sh';
+        let currentConfig = {};
+        let isLoading = false;
+        let autoRefreshTimer = null;
+        let messageTimer = null;
+        let ksuExec = null;
+
+        // KernelSU WebUI uses exec(); ordinary browsers use the loopback fallback.
+        async function getKsuExec() {
+            if (ksuExec) return ksuExec;
+            if (!window.ksu || typeof window.ksu.exec !== 'function') return null;
+
+            let callbackCounter = 0;
+            ksuExec = (command) => new Promise((resolve, reject) => {
+                const callbackName = `thermal_exec_${Date.now()}_${callbackCounter++}`;
+                window[callbackName] = (errno, stdout, stderr) => {
+                    delete window[callbackName];
+                    resolve({ errno, stdout, stderr });
+                };
+                try {
+                    window.ksu.exec(command, '{}', callbackName);
+                } catch (error) {
+                    delete window[callbackName];
+                    reject(error);
+                }
+            });
+            return ksuExec;
+        }
+
+        async function execApi(args) {
+            const exec = await getKsuExec();
+            if (!exec) return null;
+            const result = await Promise.resolve(exec(`sh ${API_PATH} ${args}`));
+            if (!result || result.errno) {
+                throw new Error(result && result.stderr ? result.stderr : 'KernelSU命令执行失败');
+            }
+            return JSON.parse((result.stdout || '').trim());
+        }
+
+        // 带超时的fetch
+        function fetchWithTimeout(url, options = {}, timeout = 5000) {
+            return Promise.race([
+                fetch(url, options),
+                new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('请求超时')), timeout)
+                )
+            ]);
+        }
+
+        async function requestApi(action, options = {}, timeout = 5000) {
+            const args = action === 'get' ? '--get' : action === 'health' ? '--health' : null;
+            if (args) {
+                const result = await execApi(args);
+                if (result) return result;
+            }
+
+            const url = `${LOCAL_API}?action=${action}`;
+            const response = await fetchWithTimeout(url, options, timeout);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            const contentType = response.headers.get('content-type') || '';
+            if (!contentType.includes('application/json')) {
+                throw new Error('服务器返回了非JSON响应');
+            }
+            return response.json();
+        }
+
+        // 显示全局加载状态
+        function showLoading(show = true) {
+            const overlay = document.getElementById('loading-overlay');
+            if (overlay) {
+                overlay.style.display = show ? 'flex' : 'none';
+            }
+        }
+
+        // 加载配置
+        async function loadConfig() {
+            if (isLoading) return;
+            isLoading = true;
+            
+            const refreshBtn = document.getElementById('refresh-btn');
+            if (refreshBtn) {
+                refreshBtn.classList.add('spinning');
+                refreshBtn.disabled = true;
+            }
+            
+            try {
+                const data = await requestApi('get', {
+                    cache: 'no-cache',
+                    headers: { 'Accept': 'application/json' }
+                }, 5000);
+                
+                // 验证数据格式
+                if (!data.MODE || !data.STATIC_STATE) {
+                    throw new Error('配置数据格式错误');
+                }
+                
+                currentConfig = data;
+                updateUI();
+                
+                // 清除错误消息
+                const msgDiv = document.getElementById('message');
+                if (msgDiv && msgDiv.classList.contains('error')) {
+                    msgDiv.style.display = 'none';
+                }
+            } catch (error) {
+                console.error('加载配置失败:', error);
+                
+                let errorMsg = '加载配置失败';
+                if (error.message.includes('Failed to fetch')) {
+                    errorMsg = '无法连接到服务，请确认模块已安装并重启';
+                } else if (error.message.includes('请求超时')) {
+                    errorMsg = '服务响应超时，请稍后重试';
+                } else {
+                    errorMsg = '加载配置失败: ' + error.message;
+                }
+                
+                showMessage(errorMsg, 'error', false);
+                
+                // 使用默认配置，但标记为未验证
+                if (!currentConfig.MODE) {
+                    currentConfig = { MODE: 'dynamic', STATIC_STATE: '1' };
+                    updateUI();
+                }
+            } finally {
+                isLoading = false;
+                if (refreshBtn) {
+                    refreshBtn.classList.remove('spinning');
+                    refreshBtn.disabled = false;
+                }
+            }
+        }
+
+        // 更新UI显示
+        function updateUI() {
+            const modeText = currentConfig.MODE === 'static' 
+                ? `静态模式 (${currentConfig.STATIC_STATE === '1' ? '开启' : '关闭'})` 
+                : '动态模式';
+            document.getElementById('current-mode').textContent = '当前: ' + modeText;
+
+            // 清除所有选中状态
+            document.querySelectorAll('.option-btn').forEach(btn => {
+                btn.classList.remove('selected');
+                btn.removeAttribute('disabled');
+            });
+            
+            // 高亮当前选择并禁用
+            if (currentConfig.MODE === 'static') {
+                const btnId = currentConfig.STATIC_STATE === '1' ? 'static-enable' : 'static-disable';
+                const btn = document.getElementById(btnId);
+                if (btn) {
+                    btn.classList.add('selected');
+                    btn.setAttribute('disabled', 'true');
+                }
+            } else if (currentConfig.MODE === 'dynamic') {
+                const btn = document.getElementById('dynamic-enable');
+                if (btn) {
+                    btn.classList.add('selected');
+                    btn.setAttribute('disabled', 'true');
+                }
+            }
+        }
+
+        // 切换标签页
+        function switchTab(event, tab) {
+            // 更新标签按钮状态
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.remove('active');
+                btn.setAttribute('aria-selected', 'false');
+            });
+            
+            // 更新内容面板状态
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+            
+            if (event && event.target) {
+                event.target.classList.add('active');
+                event.target.setAttribute('aria-selected', 'true');
+            }
+            
+            const tabContent = document.getElementById('tab-' + tab);
+            if (tabContent) {
+                tabContent.classList.add('active');
+            }
+        }
+
+        // 设置静态模式
+        async function setStatic(state) {
+            // 如果已经是当前状态，不需要操作
+            if (currentConfig.MODE === 'static' && currentConfig.STATIC_STATE === String(state)) {
+                showMessage('已经是该状态，无需重复设置', 'info');
+                return;
+            }
+            
+            const stateName = state === 1 ? '开启' : '关闭';
+            if (!confirm(`确认切换到静态模式并${stateName}Horae？\n\n配置将在最多3秒内生效`)) return;
+            
+            await applyConfig('static', state);
+        }
+
+        // 设置动态模式
+        async function setDynamic() {
+            // 如果已经是动态模式，不需要操作
+            if (currentConfig.MODE === 'dynamic') {
+                showMessage('已经是动态模式，无需重复设置', 'info');
+                return;
+            }
+            
+            if (!confirm('确认切换到动态模式？\n\n将自动根据场景（相机/充电/游戏）控制温控进程\n\n配置将在最多3秒内生效')) return;
+            
+            await applyConfig('dynamic', 1);
+        }
+
+        // 应用配置 - 统一处理函数
+        async function applyConfig(mode, state) {
+            showLoading(true);
+            
+            try {
+                showMessage('正在应用配置...', 'info', false);
+                
+                let result = await execApi(`--set ${mode} ${state}`);
+                if (!result) {
+                    result = await requestApi('set', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                            'Accept': 'application/json'
+                        },
+                        body: `MODE=${encodeURIComponent(mode)}&STATIC_STATE=${encodeURIComponent(state)}`
+                    }, 10000);
+                }
+                
+                if (result.success) {
+                    showMessage('✓ 配置已保存并生效！', 'success');
+                    // 等待服务重启后刷新
+                    setTimeout(() => loadConfig(), 1500);
+                } else {
+                    throw new Error(result.message || '未知错误');
+                }
+            } catch (error) {
+                console.error('应用配置失败:', error);
+                
+                let errorMsg = '操作失败';
+                if (error.message.includes('Failed to fetch')) {
+                    errorMsg = '无法连接到服务，请检查模块状态';
+                } else if (error.message.includes('请求超时')) {
+                    errorMsg = '服务响应超时，配置可能已生效，请手动刷新确认';
+                } else {
+                    errorMsg = '操作失败: ' + error.message;
+                }
+                
+                showMessage(errorMsg, 'error', false);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // 显示消息
+        function showMessage(text, type, autoHide = true) {
+            // 清除之前的定时器
+            if (messageTimer) {
+                clearTimeout(messageTimer);
+                messageTimer = null;
+            }
+            
+            const msgDiv = document.getElementById('message');
+            if (!msgDiv) return;
+            
+            msgDiv.textContent = text;
+            msgDiv.className = 'message ' + type;
+            msgDiv.style.display = 'block';
+            
+            if (autoHide && (type === 'success' || type === 'info')) {
+                messageTimer = setTimeout(() => {
+                    msgDiv.style.display = 'none';
+                }, 3000);
+            }
+        }
+
+        // 设置自动刷新
+        function setupAutoRefresh() {
+            // 清除旧定时器
+            if (autoRefreshTimer) {
+                clearInterval(autoRefreshTimer);
+            }
+            
+            // 每30秒自动刷新
+            autoRefreshTimer = setInterval(() => {
+                if (!isLoading && !document.hidden) {
+                    loadConfig();
+                }
+            }, 30000);
+        }
+
+        // 初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            loadConfig();
+            setupAutoRefresh();
+            
+            // 键盘快捷键支持
+            document.addEventListener('keydown', function(e) {
+                // Ctrl/Cmd + R: 刷新
+                if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
+                    e.preventDefault();
+                    loadConfig();
+                }
+            });
+        });
+
+        // 页面可见性变化时刷新
+        document.addEventListener('visibilitychange', function() {
+            if (!document.hidden && !isLoading) {
+                loadConfig();
+            }
+        });
+
+        // 页面卸载时清理
+        window.addEventListener('beforeunload', function() {
+            if (autoRefreshTimer) {
+                clearInterval(autoRefreshTimer);
+            }
+            if (messageTimer) {
+                clearTimeout(messageTimer);
+            }
+        });
+    </script>
+</body>
+</html>

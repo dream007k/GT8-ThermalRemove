@@ -1,0 +1,3 @@
+#MAGISK
+# 该标记仅为兼容部分 Recovery 的 zip 识别，不表示依赖 Magisk。
+# 实际安装由 SukiSU / KernelSU 的 ksud 完成。
