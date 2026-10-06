@@ -15,7 +15,7 @@ export TR_SIDE_EFFECTS=1
 # 导致主进程对「稍早的配置改动」漏检一次（最多 60s）。见 functions.sh 的 load_conf。
 export CONF_PERSISTENT=1
 
-log_info "==== service 启动 (v2.15.1, Android ${ANDROID_REL:-?}) ===="
+log_info "==== service 启动 (v2.15.2, Android ${ANDROID_REL:-?}) ===="
 load_conf
 
 # v2.8：模块冲突自检（只写日志，不改任何状态、不阻断启动）
