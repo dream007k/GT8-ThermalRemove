@@ -773,8 +773,8 @@ cp "$MD/mode.conf" "$W/mode.conf"; cp "$MD/spoof.conf" "$W/spoof.conf"
 sec "K. 结构与静态一致性"
 _prop_v=$(grep -m1 '^version=' "$MD/module.prop" | cut -d= -f2)
 _prop_c=$(grep -m1 '^versionCode=' "$MD/module.prop" | cut -d= -f2)
-eq "K01 version=v2.17.4" "$_prop_v" "v2.17.4"
-eq "K02 versionCode=83" "$_prop_c" "83"
+eq "K01 version=v2.17.5" "$_prop_v" "v2.17.5"
+eq "K02 versionCode=84" "$_prop_c" "84"
 eq "K03 module id 未变" "$(grep -m1 '^id=' "$MD/module.prop" | cut -d= -f2)" "realme-gt8-sukisu-thermal-remove"
 _syn=0
 for f in "$MD"/*.sh "$MD"/common/*.sh "$MD"/webroot/cgi-bin/*.sh; do
@@ -840,8 +840,8 @@ eq "Q12 mount_config_overlays 在 system.sh" "$(grep -c '^mount_config_overlays(
 
 # ══ 21. v2.15.0 F4：按前台应用自动切档 ═════════════════════════
 sec "R. 自动切档 F4"
-eq "R01 schema 含 AUTO_GAME_PRESET" "$(grep -c 'AUTO_GAME_PRESET' "$MD/common/schema.sh")" "5"
-eq "R02 AUTO_GAME_PRESET 归 mode+默认+不接管（3 处分支）" "$(grep -c 'AUTO_GAME_PRESET)' "$MD/common/schema.sh")" "3"
+eq "R01 schema 含 AUTO_GAME_PRESET" "$(grep -c 'AUTO_GAME_PRESET' "$MD/common/schema.sh")" "6"
+eq "R02 AUTO_GAME_PRESET 归 mode+默认+不接管+help（4 处分支）" "$(grep -c 'AUTO_GAME_PRESET)' "$MD/common/schema.sh")" "4"
 eq "R03 AUTO_GAME_PRESET 不被预设接管" "$(grep -c 'CHECK_KNOWN_CFG|AUTO_GAME_PRESET' "$MD/common/schema.sh")" "1"
 eq "R04 state 有 auto_game_preset_tick" "$(grep -c '^auto_game_preset_tick()' "$MD/common/state.sh")" "1"
 eq "R05 state 有 _auto_find_nearest" "$(grep -c '^_auto_find_nearest()' "$MD/common/state.sh")" "1"
@@ -1083,6 +1083,57 @@ eq "Y13 已知局限留在 README" "$(grep -c '^## 已知局限' "$MD/README.md"
 # README 不再有大段排障/设计内容（这些标题应从 README 消失）
 eq "Y14 README 无亮度排查标题" "$(grep -c '亮度异常排查步骤' "$MD/README.md")" "0"
 eq "Y15 README 无工作原理标题" "$(grep -c '^## 工作原理' "$MD/README.md")" "0"
+
+
+# ══ 29. v2.17.5 U4+U5：ⓘ 内联帮助 + 预设导入导出 ═══════════════
+sec "Z. U4+U5"
+# ── U4：schema_help 全覆盖 + 接口 + 前端 ──
+_zmiss=0
+. "$MD/common/schema.sh"
+for _zk in $SCHEMA_KEYS; do
+    schema_help "$_zk" || _zmiss=$((_zmiss+1))
+done
+eq "Z01 schema_help 覆盖全部键" "$_zmiss" "0"
+eq "Z02 api 有 get_schema" "$(grep -c '^get_schema()' "$MD/webroot/cgi-bin/api.sh")" "1"
+eq "Z03 api 分派 --schema" "$(grep -cF 'schema) get_schema' "$MD/webroot/cgi-bin/api.sh")" "1"
+eq "Z04 前端有 injectHelp" "$(grep -c 'function injectHelp' "$MD/webroot/index.html")" "1"
+eq "Z05 前端有 apiSchema" "$(grep -c 'function apiSchema' "$MD/webroot/index.html")" "1"
+# 功能断言：--schema 输出合法 JSON 且含 MODE 文案
+_zs=$(MODE_CONF="$W/mode.conf" SPOOF_CONF="$W/spoof.conf" sh "$MD/webroot/cgi-bin/api.sh" --schema 2>/dev/null)
+eq "Z06 --schema success" "$(printf '%s' "$_zs" | grep -c '"success":true')" "1"
+eq "Z07 --schema 含 MODE help" "$(printf '%s' "$_zs" | grep -c '"MODE":')" "1"
+
+# ── U5：预设导入导出 ──
+_zpd="$W/px_presets"; mkdir -p "$_zpd"
+cp "$MD/presets"/*.conf "$_zpd/" 2>/dev/null
+_zenv="MODDIR=$MD PRESET_DIR=$_zpd MODE_CONF=$W/mode.conf SPOOF_CONF=$W/spoof.conf TMPDIR=$W/tmp"
+# 导出内置档（原样回显含 PRESET_NAME）
+_zexp=$(env $_zenv sh "$MD/webroot/cgi-bin/api.sh" --preset-export game 2>/dev/null)
+eq "Z08 导出 game 成功" "$(printf '%s' "$_zexp" | grep -c '"success":true')" "1"
+eq "Z09 导出内容含元数据" "$(printf '%s' "$_zexp" | grep -c 'PRESET_NAME')" "1"
+# 导入合法档
+printf 'PRESET_NAME=测试档\nPRESET_DESC=配方\nMODE=dynamic\nUNLOCK_GPU=0\n' | \
+    env $_zenv sh "$MD/webroot/cgi-bin/api.sh" --preset-import ztest >/dev/null 2>&1
+[ -f "$_zpd/ztest.conf" ] && ok || bad "Z10 导入合法档落盘" "missing" "存在"
+# 导入后引擎能识别
+_zenv2="MODDIR=$MD PRESET_DIR=$_zpd MODE_CONF=$W/mode.conf SPOOF_CONF=$W/spoof.conf"
+_eq_ids=$(env $_zenv2 sh -c '. "$MODDIR/common/presets.sh" 2>/dev/null; preset_ids' 2>/dev/null)
+eq "Z11 导入档进 preset_ids" "$(printf '%s' "$_eq_ids" | grep -c ztest)" "1"
+# 覆盖内置档被拒
+_zrc=$(printf 'MODE=always\n' | env $_zenv sh "$MD/webroot/cgi-bin/api.sh" --preset-import game 2>/dev/null)
+eq "Z12 覆盖内置档被拒" "$(printf '%s' "$_zrc" | grep -c '"success":false')" "1"
+# 非法值被拒
+_zrc2=$(printf 'MODE=whatever\n' | env $_zenv sh "$MD/webroot/cgi-bin/api.sh" --preset-import zbad 2>/dev/null)
+eq "Z13 非法值被拒" "$(printf '%s' "$_zrc2" | grep -c '"success":false')" "1"
+# BLACKLIST 被拒（预设不接管个性化键）
+_zrc3=$(printf 'BLACKLIST=*x*\n' | env $_zenv sh "$MD/webroot/cgi-bin/api.sh" --preset-import zblack 2>/dev/null)
+eq "Z14 BLACKLIST 导入被拒" "$(printf '%s' "$_zrc3" | grep -c '"success":false')" "1"
+# 未知元数据字段被拒
+_zrc4=$(printf 'PRESET_HACK=x\nMODE=dynamic\n' | env $_zenv sh "$MD/webroot/cgi-bin/api.sh" --preset-import zmeta 2>/dev/null)
+eq "Z15 未知元数据被拒" "$(printf '%s' "$_zrc4" | grep -c '"success":false')" "1"
+# action.sh 命令入口
+eq "Z16 action 有 preset-export" "$(grep -c 'preset-export)' "$MD/action.sh")" "1"
+eq "Z17 action 有 preset-import" "$(grep -c 'preset-import)' "$MD/action.sh")" "1"
 
 # ══ 13. 收尾 ═════════════════════════════════════════════════
 # 假 sysfs 树 / 假模块 / 运行目录全部集中在本 run 目录下（$W），

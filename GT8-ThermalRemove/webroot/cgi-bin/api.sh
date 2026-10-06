@@ -653,6 +653,19 @@ get_history() {
     echo "{\"success\":true,\"items\":[$_rows]}"
 }
 
+# v2.17.5 / U4：输出全部配置键的帮助文案（schema_help 的 JSON 化），供 WebUI ⓘ 内联说明消费。
+# 文案单一事实源在 common/schema.sh，这里只做「遍历 + 转义 + 拼 JSON」，不重复文案。
+get_schema() {
+    _help=""
+    _first=1
+    for _hk in $SCHEMA_KEYS; do
+        schema_help "$_hk" || continue
+        [ "$_first" = "1" ] && _first=0 || _help="$_help,"
+        _help="$_help\"$_hk\":\"$(_jesc "$_SC_HELP")\""
+    done
+    echo "{\"success\":true,\"help\":{$_help}}"
+}
+
 # v2.8.13：把日志复制到 /sdcard/Download（root 权限，浏览器下载目录不可控时的
 # 确定性落盘位置）。文件名带时间戳，避免覆盖。失败时返回明确错误，前端据此降级。
 get_save2download() {
@@ -894,6 +907,40 @@ set_preset() {
 # 而 BLACKLIST 的值恰恰是「空格分隔的通配符列表」；CGI 通道同理 —— do_set
 # 用 `tr '&' ' '` 拆参且不做 URL 解码，空格会以 %20 原样落盘。
 # 所以给它一条专用通道：值作为**单个参数**传递，此处再解码 %20。
+# v2.17.5 / U5：预设导出 —— 返回某档完整 .conf 内容（JSON，供前端复制分享）
+get_preset_export() {
+    if ! _load_preset_engine; then json_error "预设引擎不可用"; return; fi
+    _pe_id="$1"
+    case "$_pe_id" in ''|*[!a-z0-9_-]*) json_error "非法的预设 id"; return ;; esac
+    [ -f "$PRESET_DIR/$_pe_id.conf" ] || { json_error "预设不存在：$_pe_id"; return; }
+    _pe_content=$(preset_export "$_pe_id" 2>/dev/null)
+    # 预设是多行 K=V 文本，换行必须转义成 \n 放进 JSON（_jesc 会把控制字符删掉，
+    # 那样 content 会被拼成一行、前端无法还原）。这里单独处理换行 + 引号/反斜杠。
+    _pe_json=$(printf '%s' "$_pe_content" | sed -e 's/[\\"]/\\&/g' -e 's/$/\\n/' | tr -d '\n')
+    _pe_json=$(printf '%s' "$_pe_json" | sed 's/\\n$//')
+    echo "{\"success\":true,\"id\":\"$_pe_id\",\"content\":\"$_pe_json\"}"
+}
+
+# v2.17.5 / U5：预设导入 —— 内容从 stdin（CGI POST body / 管道）读；若调用方通过
+# 第 3 个参数传内容（ksu.exec 通道无法走 stdin），则用参数。两条路同一套校验。
+get_preset_import() {
+    if ! _load_preset_engine; then json_error "预设引擎不可用"; return; fi
+    _pi_id="$1"
+    case "$_pi_id" in ''|*[!a-z0-9_-]*) json_error "非法的预设 id"; return ;; esac
+    case "$_pi_id" in stock|daily|game|cool|debug) json_error "内置档不可覆盖，请换一个 id"; return ;; esac
+    if [ -n "${2:-}" ]; then
+        printf '%s' "$2" | preset_import "$_pi_id"
+    else
+        preset_import "$_pi_id"
+    fi
+    if [ "$?" = "0" ]; then
+        preset_meta_into "$_pi_id"
+        echo "{\"success\":true,\"id\":\"$_pi_id\",\"name\":\"$(_jesc "$_PM_NAME")\",\"message\":\"已导入预设「$(_jesc "$_PM_NAME")」\"}"
+    else
+        json_error "导入失败：内容含非法键/值（键需在白名单内、值需过值域校验）"
+    fi
+}
+
 set_blacklist() {
     # 严格净化：配置是行式纯文本，值里出现换行等于注入任意键。
     # 只放行 通配符/字母数字/.:_-? ，其余（换行、引号、分号、$ 等）一律变空格。
@@ -919,8 +966,11 @@ case "$1" in
     --verify) get_verify; exit 0 ;;
     --conflicts) get_conflicts; exit 0 ;;
     --doctor) get_doctor; exit 0 ;;
+    --schema) get_schema; exit 0 ;;
     --presets) get_presets; exit 0 ;;
     --preset)  set_preset "$2"; exit 0 ;;
+    --preset-export) get_preset_export "$2"; exit 0 ;;
+    --preset-import) get_preset_import "$2" "$3"; exit 0 ;;
     --setlist) set_blacklist "$2"; exit 0 ;;
 esac
 

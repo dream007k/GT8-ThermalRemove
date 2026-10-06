@@ -3,7 +3,7 @@ import zipfile, os, io
 BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.chdir(BASE)
 src = 'GT8-ThermalRemove'
-out = 'GT8-ThermalRemove-v2.17.4.zip'
+out = 'GT8-ThermalRemove-v2.17.5.zip'
 if os.path.exists(out):
     os.remove(out)
 # v2.17.0 首屏提速：style.css 内联进 index.html（消除外链 render-blocking 白屏），
@@ -32,7 +32,7 @@ z = zipfile.ZipFile(out)
 names = z.namelist()
 print('files:', len(names))
 prop = z.read('module.prop').decode('utf-8')
-assert 'version=v2.17.4' in prop and 'versionCode=83' in prop, prop
+assert 'version=v2.17.5' in prop and 'versionCode=84' in prop, prop
 api = z.read('webroot/cgi-bin/api.sh').decode('utf-8')
 for needle in ['_cgi_origin_ok', '拒绝跨源写请求', '没有可保存的项', '_msg=$(_jesc',
                'fuse_trips', 'safe_mode', 'get_doctor']:
@@ -62,7 +62,7 @@ assert 'com.mpsgame.lostabyss' in _gl, 'game_list 缺 lostabyss'
 for _d in ['docs/配置参考.md', 'docs/排障.md', 'docs/原理与取舍.md']:
     assert _d in names, _d
 rd = z.read('README.md').decode('utf-8')
-assert 'v2.17.4' in rd
+assert 'v2.17.5' in rd
 # v2.17.0 首屏提速：index.html 必须已内联 CSS（无外链 style.css）
 _ix = z.read('webroot/index.html').decode('utf-8')
 assert '<style>' in _ix and '<link rel="stylesheet"' not in _ix, 'index.html 未内联 CSS'

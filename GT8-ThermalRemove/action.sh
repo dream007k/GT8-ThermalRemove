@@ -384,6 +384,40 @@ case "$1" in
             exit 1
         fi
         ;;
+    # v2.17.5 / U5：预设导出 —— 打印某档完整 .conf 内容，可直接复制分享
+    preset-export)
+        [ -f "$MODDIR/common/presets.sh" ] || { print_msg "预设引擎不存在"; exit 1; }
+        . "$MODDIR/common/presets.sh"
+        if [ -z "$2" ]; then
+            echo "用法：sh $(basename "$0") preset-export <id>"
+            echo "可用预设：$(preset_ids | tr '\n' ' ')"
+            exit 1
+        fi
+        if preset_export "$2"; then
+            :
+        else
+            print_msg "导出失败：未知或非法的预设 id「$2」"
+            exit 1
+        fi
+        ;;
+    # v2.17.5 / U5：预设导入 —— 从 stdin 读 K=V 文本，校验后存为新档
+    preset-import)
+        [ -f "$MODDIR/common/presets.sh" ] || { print_msg "预设引擎不存在"; exit 1; }
+        . "$MODDIR/common/presets.sh"
+        if [ -z "$2" ]; then
+            echo "用法：cat recipe.txt | sh $(basename "$0") preset-import <新档id>"
+            echo "  · id 只允许 [a-z0-9_-]，不能是内置档（stock/daily/game/cool/debug）"
+            echo "  · 内容为 K=V 文本；键过白名单、值过值域校验，任一行非法整体拒绝"
+            exit 1
+        fi
+        if preset_import "$2"; then
+            preset_meta_into "$2"
+            print_msg "已导入预设「$_PM_NAME」（$2），可在 WebUI / preset 列表看到"
+        else
+            print_msg "导入失败：内容含非法键/值，或 id 非法/为内置档"
+            exit 1
+        fi
+        ;;
     # 亮度安全预设：关掉一切可能影响亮度/显示的手段，并还原已被动过的冷却节点
     bsafe)
         sed -i 's/^UNLOCK_CDEV=.*/UNLOCK_CDEV=0/'     "$MODE_CONF" 2>/dev/null

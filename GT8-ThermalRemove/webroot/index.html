@@ -98,6 +98,30 @@
     <p class="pempty">加载中…</p>
   </section>
 
+  <!-- ══ v2.17.5 U5：预设导入导出 ══ -->
+  <details class="pexp">
+    <summary>预设导入 / 导出（分享配方）</summary>
+    <div class="pexp-body">
+      <div class="pexp-row">
+        <label>导出档</label>
+        <select id="px-export-id" class="sel"></select>
+        <button id="btn-px-export" class="ghost">导出</button>
+      </div>
+      <textarea id="px-export" class="pexp-ta" readonly
+        placeholder="点「导出」后配方文本出现在这里，手动复制即可分享"></textarea>
+      <div class="pexp-row">
+        <label>导入新档 id</label>
+        <input id="px-import-id" class="inp" placeholder="如 mygame（小写字母/数字/_-，非内置档名）">
+      </div>
+      <textarea id="px-import" class="pexp-ta"
+        placeholder="粘贴 K=V 配方（含 PRESET_NAME=… 等元数据）"></textarea>
+      <div class="pexp-row">
+        <button id="btn-px-import">导入</button>
+        <span class="pexp-note">键需在白名单内、值需过值域校验；任一行非法整体拒绝。</span>
+      </div>
+    </div>
+  </details>
+
   <!-- ══ 温控统计 ══ -->
   <p class="sec-title">温控统计</p>
   <section class="stats">
@@ -591,6 +615,7 @@ function renderPresets(d){
     return;
   }
   PRESETS = ps;
+  populatePxSelect();   /* v2.17.5 U5：导出下拉同步为当前档列表 */
   var act = null;
   ps.forEach(function(p){ if (p.active) act = p; });
   box.innerHTML = ps.map(function(p){
@@ -631,6 +656,51 @@ function loadPresets(){
     if (box) box.innerHTML = '<p class="pempty">预设读取失败：'
       + esc((e && e.message) || e) + '</p>';
   });
+}
+
+/* ════════════════ v2.17.5 U5：预设导入导出 ════════════════ */
+function apiPresetExport(id){
+  if (HAS_KSU) return execJson('--preset-export ' + sanitize(id));
+  return cgiJson('action=preset-export&id=' + encodeURIComponent(id));
+}
+function apiPresetImport(id, content){
+  if (HAS_KSU) return execJson('--preset-import ' + sanitize(id) + ' ' + shq(content));
+  return cgiJson('action=preset-import&id=' + encodeURIComponent(id),
+                 { method: 'POST', body: content });
+}
+function populatePxSelect(){
+  var sel = $('px-export-id'); if (!sel) return;
+  var prev = sel.value;
+  var opts = PRESETS.map(function(p){
+    return '<option value="' + esc(p.id) + '">' + esc(p.name) + '（' + esc(p.id) + '）</option>';
+  }).join('');
+  sel.innerHTML = opts || '<option value="">（无预设）</option>';
+  if (prev) sel.value = prev;
+}
+function doPresetExport(){
+  var id = ($('px-export-id') || {}).value;
+  var ta = $('px-export');
+  if (!id || !ta) { msg('请先选择要导出的档', false); return; }
+  ta.value = '导出中…';
+  apiPresetExport(id).then(function(d){
+    if (d && d.success) { ta.value = d.content || ''; msg('已导出「' + (d.id||id) + '」，复制上面的文本即可分享', true); }
+    else { ta.value = ''; msg((d && d.message) || '导出失败', false); }
+  }).catch(function(){ ta.value = ''; msg('导出失败', false); });
+}
+function doPresetImport(){
+  var id = (($('px-import-id') || {}).value || '').trim();
+  var content = ($('px-import') || {}).value || '';
+  if (!id) { msg('请填写新档 id', false); return; }
+  if (!/^[a-z0-9_-]+$/.test(id)) { msg('id 只允许小写字母/数字/下划线/连字符', false); return; }
+  if (!content.trim()) { msg('请粘贴配方内容', false); return; }
+  apiPresetImport(id, content).then(function(d){
+    msg(d.message || (d.success ? '已导入' : '导入失败'), !!d.success);
+    if (d && d.success) { loadPresets(); $('px-import').value = ''; $('px-import-id').value = ''; }
+  }).catch(transportError('导入预设'));
+}
+function bindPresetIO(){
+  if ($('btn-px-export')) $('btn-px-export').onclick = doPresetExport;
+  if ($('btn-px-import'))  $('btn-px-import').onclick  = doPresetImport;
 }
 
 /* 应用预设 → 三处联动刷新（状态磁贴 / 预设匹配度 / 温感树）。
@@ -1407,6 +1477,54 @@ function toggleHistAuto() {
   }
 }
 
+/* ════════════════ 高阶项 ⓘ 内联帮助（v2.17.5 U4） ════════════════
+ * 文案单一事实源在 common/schema.sh（--schema 接口输出），前端不硬编码文案，
+ * 只负责「拉取 → 注入 ⓘ 按钮 → 点击展开」。避免前端写一份、后端写一份的漂移。 */
+var SCHEMA_HELP = null;
+function apiSchema() {
+  if (HAS_KSU) return execJson('--schema');
+  return cgiJson('action=schema');
+}
+function injectHelp() {
+  apiSchema().then(function(d){
+    if (!d || !d.help) return;
+    SCHEMA_HELP = d.help;
+    var boxes = document.querySelectorAll('#pane-diag .adv label.sw, #pane-diag .adv label');
+    for (var i = 0; i < boxes.length; i++) {
+      var lab = boxes[i];
+      var inp = lab.querySelector('input, select');
+      if (!inp || !inp.id) continue;
+      var key = inp.id;
+      var txt = SCHEMA_HELP[key];
+      if (!txt) continue;
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'hint';
+      btn.textContent = 'ⓘ';
+      btn.setAttribute('data-key', key);
+      btn.onclick = function(){
+        var k = this.getAttribute('data-key');
+        var pop = document.getElementById('hint-pop');
+        if (pop && pop.getAttribute('data-key') === k) { pop.remove(); return; }
+        if (pop) pop.remove();
+        var p = document.createElement('div');
+        p.id = 'hint-pop';
+        p.setAttribute('data-key', k);
+        p.className = 'hint-pop';
+        p.textContent = SCHEMA_HELP[k] || '';
+        this.parentNode.appendChild(p);
+        var self = this;
+        setTimeout(function(){
+          document.addEventListener('click', function close(e){
+            if (e.target !== self) { p.remove(); document.removeEventListener('click', close); }
+          }, { once: true });
+        }, 0);
+      };
+      lab.appendChild(btn);
+    }
+  }).catch(function(){ /* 拉不到 help 时静默：ⓘ 只是增强，不阻断主功能 */ });
+}
+
 /* ════════════════ 三段式导航（v2.16.0 U1） ════════════════ */
 var CUR_TAB = 'overview';
 var THERMAL_LOADED = false;
@@ -1476,6 +1594,8 @@ loadStatus();
 loadConflicts();      /* 模块列表很少变化，只在加载/手动刷新时查一次 */
 loadPresets();        /* v2.11.0：场景预设档（含当前匹配度） */
 loadVersion();        /* 版本徽标从 module.prop 实时读，便于确认刷入的是哪一版 */
+injectHelp();         /* v2.17.5 U4：高阶项 ⓘ 内联说明（文案来自 schema --schema） */
+bindPresetIO();       /* v2.17.5 U5：预设导入导出按钮 */
 /* v2.16.0 U1：温感列表改切到「温感」tab 才懒加载，启动不再拉 --temps（省一次 fork） */
 renderRealState();
 /* 温感树刻意不在启动时加载 —— 83 个温感的请求留给用户显式点击（省电） */

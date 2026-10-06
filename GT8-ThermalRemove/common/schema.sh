@@ -103,6 +103,60 @@ schema_valid() {
     return 1
 }
 
+# 帮助文案（v2.17.5 / U4）：每个键一句「这是什么 + 设了会怎样 + 建议」。
+# 与 file/default/valid 同源 —— WebUI 的 ⓘ 内联说明、未来可能的 doctor 提示都从这里取，
+# 避免「前端硬编码一份、后端再写一份」的文案漂移。
+# 写 _SC_HELP；非白名单返回 1。
+schema_help() {
+    case "$1" in
+        MODE)        _SC_HELP="运行模式。dynamic=充电/保护名单时自动恢复原厂温控（推荐）；always=始终去温控；off=等同原厂" ;;
+        GAME_PROTECT) _SC_HELP="游戏时是否保留原厂温控。1=进游戏恢复保护（保守，可能压帧）；0=游戏时也去温控（满血）" ;;
+        STOP_SERVICES) _SC_HELP="停用 thermal 相关服务（极端兜底）。仅当欺骗失效、温控仍在压频时开启；会连 perf 守护进程一起 kill，性能档可能失效" ;;
+        UNLOCK_FREQ) _SC_HELP="解锁 CPU/GPU 频率上限（核心去温控手段之一）。默认开" ;;
+        UNLOCK_GPU)  _SC_HELP="是否解锁 GPU 频率。配合 GPU_MAX_CLK 甜点值平衡功耗/发热" ;;
+        GPU_MAX_CLK) _SC_HELP="GPU 频率甜点值（MHz）。SM8750 上真正生效的是 devfreq 的 max_freq，改完应以 devfreq/cur_freq 确认" ;;
+        PATCH_THERMAL) _SC_HELP="安装时改写核心温控配置（HORAE 成熟规则）。默认开" ;;
+        PATCH_EXTRA) _SC_HELP="扩展配置改写（含 oppo_display_perf_list.xml）。⚠ 与亮度/性能相关，默认关" ;;
+        UNLOCK_CDEV) _SC_HELP="强制归零 cooling_device。⚠ 会误伤背光类节点、压低亮度，默认关" ;;
+        DISPLAY_PROTECT) _SC_HELP="显示/背光类冷却节点永久保护。务必保持开启，否则亮度可能被压到最低" ;;
+        OPPO_SHELL_TEMP) _SC_HELP="写 /proc/shell-temp 外壳温度。⚠ 与屏幕亮度直接相关，默认关" ;;
+        OPPO_GAUGE)  _SC_HELP="写 oplus-votable GAUGE_UPDATE。作用不明确，不建议开" ;;
+        HORAE_TESTMODE) _SC_HELP="调用 OPPO HORAE testmode（dumpsys）。进阶手段，默认关" ;;
+        DISABLE_ORMS) _SC_HELP="停用 OPPO ORMS 资源/温控管理服务。默认关" ;;
+        TOUCH_BOOST) _SC_HELP="触控服务 renice -19（厂商触控守护进程提权）。默认开" ;;
+        TOUCH_THREAD_BOOST) _SC_HELP="inputflinger 线程提权（InputReader/Dispatcher 的 nice，非实时）。仅 Android 12+ 有效，默认关" ;;
+        TOUCH_THREAD_NICE) _SC_HELP="inputflinger 线程提权的目标 nice（默认 -19）" ;;
+        CHECK_CONFLICTS) _SC_HELP="模块冲突自检（安装期 + 运行时 + WebUI）。只告警不阻断，默认开" ;;
+        SCAN_RESOURCES) _SC_HELP="Tier C 按资源占用扫描第三方模块（翻开其脚本查关键字）。默认关，安装期与 conflicts 自动开" ;;
+        LOG_LEVEL)   _SC_HELP="日志级别：debug=最详细 / info=默认 / warn=仅异常 / error=仅核心失效" ;;
+        MAINT_SECONDS) _SC_HELP="完整维护周期（秒）。默认 120；设 30 即回到早期节奏（更耗电但更及时）" ;;
+        PERF_REFRESH_SECONDS) _SC_HELP="只做频率锁压制（reapply_perf）的周期（秒）。0=只在维护时做" ;;
+        LOG_HEARTBEAT) _SC_HELP="欺骗重放日志：每 N 次维护记一条。0=只在条数变化时记" ;;
+        CONF_FORCE_TICKS) _SC_HELP="配置缓存强制刷新周期（tick 数）。默认 12" ;;
+        REPLACE_ENCRYPTED) _SC_HELP="非明文 sys_thermal_control_config 整体替换。仅安装/升级时读取，运行中改无效" ;;
+        SHOW_REAL_TEMP) _SC_HELP="是否允许 WebUI 读取真实温度（手动触发）。默认开" ;;
+        REAL_TEMP_DELAY_MS) _SC_HELP="真实温度探测第一轮等待（毫秒）。读不到会自动 320/800ms 重试" ;;
+        RUNTIME_SNAPSHOT) _SC_HELP="/data/system 显示配置「首次快照」。改坏时可用 rr_restore 一键还原" ;;
+        CHECK_KNOWN_CFG) _SC_HELP="安装期核对 12 个已知配置文件名，结果写入 patched/known.list" ;;
+        FUSE_ENABLE) _SC_HELP="温度保险丝总开关（默认开）。真实温度越界自动撤销欺骗、回原厂保护" ;;
+        FUSE_COOLDOWN) _SC_HELP="保险丝触发后冷却时长（秒）。期间拒绝重新去温控" ;;
+        BOOT_FAIL_LIMIT) _SC_HELP="连续几次开机没走完就自动进安全模式（默认 3）。宁可少一次去温控，也不卡开机" ;;
+        FUSE_TEMP_BATT) _SC_HELP="电池路保险丝阈值（毫摄氏度，0=关该路）。默认 45000=45°C" ;;
+        FUSE_TEMP_SOC) _SC_HELP="SoC 路保险丝阈值（毫摄氏度，0=关该路）。默认 80000=80°C" ;;
+        FUSE_TEMP_SKIN) _SC_HELP="外壳路保险丝阈值（毫摄氏度，0=关该路）。默认 46000=46°C" ;;
+        AUTO_GAME_PRESET) _SC_HELP="按前台应用自动切档。命中 game_list 的游戏自动应用 game 档，退出约 90s 后恢复" ;;
+        SPOOF_BATT) _SC_HELP="电池温度是否欺骗。0=保留充电过温保护（更安全），1=连电池一起欺骗" ;;
+        SOC_T)       _SC_HELP="SoC/主板/射频类温感欺骗目标值（毫摄氏度）。默认 29500=29.5°C" ;;
+        SKIN_T)      _SC_HELP="外壳/皮肤类温感欺骗目标值（毫摄氏度）。设太高会触发厂商降亮度" ;;
+        CAM_T)       _SC_HELP="相机类温感欺骗目标值（毫摄氏度）" ;;
+        BATT_T)      _SC_HELP="电池/USB 类温感欺骗目标值（毫摄氏度）。默认不欺骗（SPOOF_BATT=0）" ;;
+        SHELL_PROC_T) _SC_HELP="/proc/shell-temp 写入值（毫摄氏度）" ;;
+        BLACKLIST)   _SC_HELP="不参与欺骗的温感通配符列表（空格分隔）。显示/环境光类默认排除，防亮度异常" ;;
+        *) return 1 ;;
+    esac
+    return 0
+}
+
 # 预设是否可接管该键（预设引擎的约束 3：个性化键/内部调优键不接管）
 # 区别于 schema_file 的「归属全集」——do_set / load_conf 用全集，预设用这个子集。
 schema_preset_ok() {

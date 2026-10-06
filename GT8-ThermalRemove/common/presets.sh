@@ -208,6 +208,59 @@ preset_apply() {
     return 1
 }
 
+# ── v2.17.5 / U5：预设导出 —— 把某档的完整 .conf 原样打印 ─────
+# 预设本就是纯文本 K=V，天然可分享：导出的片段放到另一台设备的
+# presets/ 目录下即可用。id 仍走白名单 + 文件存在双重校验。
+preset_export() {
+    _px_id="$1"
+    case "$_px_id" in ''|*[!a-z0-9_-]*) return 1 ;; esac
+    _px_f="$PRESET_DIR/$_px_id.conf"
+    [ -f "$_px_f" ] || return 1
+    cat "$_px_f"
+    return 0
+}
+
+# ── v2.17.5 / U5：预设导入 —— 从 stdin 读 K=V 文本，校验后落盘 ──
+# 三道闸（复用现有引擎，不另起校验）：
+#   ① id 白名单 [a-z0-9_-]，且**拒绝覆盖内置五档**（模块分发，导入用新 id）
+#   ② 每行键要么是 PRESET_* 元数据（只认已知字段，值不得含 TAB），
+#      要么过 preset_route_key（schema_file + schema_preset_ok → 自动排除
+#      BLACKLIST / 个性化键）
+#   ③ 每行值过 preset_valid_value（schema_valid 值域）
+# 全部合法才落盘（先写临时再 mv，原子替换），任一行非法整体拒绝。
+preset_import() {
+    _pi_id="$1"
+    case "$_pi_id" in ''|*[!a-z0-9_-]*) return 1 ;; esac
+    case "$_pi_id" in stock|daily|game|cool|debug) return 2 ;; esac
+    _pi_tmp="${TMPDIR:-/data/local/tmp}/gt8_import_$$"
+    cat > "$_pi_tmp" 2>/dev/null || return 1
+    [ -s "$_pi_tmp" ] || { rm -f "$_pi_tmp" 2>/dev/null; return 1; }
+    _pi_keys=0
+    while IFS= read -r _pi_ln || [ -n "$_pi_ln" ]; do
+        case "$_pi_ln" in ''|'#'*) continue ;; esac
+        case "$_pi_ln" in *=*) ;; *) rm -f "$_pi_tmp" 2>/dev/null; return 1 ;; esac
+        _pi_k=${_pi_ln%%=*}; _pi_v=${_pi_ln#*=}
+        case "$_pi_k" in
+            PRESET_NAME|PRESET_DESC|PRESET_ICON|PRESET_TAGS|PRESET_RISK|PRESET_ORDER)
+                case "$_pi_v" in *"$PRESET_TAB"*) rm -f "$_pi_tmp" 2>/dev/null; return 1 ;; esac
+                case "$_pi_k" in
+                    PRESET_ORDER) case "$_pi_v" in ''|*[!0-9]*) rm -f "$_pi_tmp" 2>/dev/null; return 1 ;; esac ;;
+                esac
+                _pi_keys=$((_pi_keys + 1)) ;;
+            PRESET_*)
+                rm -f "$_pi_tmp" 2>/dev/null; return 1 ;;   # 未知元数据字段
+            *)
+                preset_route_key "$_pi_k" >/dev/null 2>&1 || { rm -f "$_pi_tmp" 2>/dev/null; return 1; }
+                _pm_strip "$_pi_v"; _pi_v="$_ps"
+                preset_valid_value "$_pi_k" "$_pi_v" || { rm -f "$_pi_tmp" 2>/dev/null; return 1; }
+                _pi_keys=$((_pi_keys + 1)) ;;
+        esac
+    done < "$_pi_tmp"
+    [ "$_pi_keys" -gt 0 ] || { rm -f "$_pi_tmp" 2>/dev/null; return 1; }
+    mv -f "$_pi_tmp" "$PRESET_DIR/$_pi_id.conf" 2>/dev/null || { rm -f "$_pi_tmp" 2>/dev/null; return 1; }
+    return 0
+}
+
 # ── 只读：把两份配置装进 " K=V K=V " 串（供零 fork 查找）──────
 _PMCACHE=""
 _PMCACHE_SEEN=""

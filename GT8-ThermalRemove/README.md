@@ -1,4 +1,4 @@
-# GT8 ThermalRemove v2.17.4
+# GT8 ThermalRemove v2.17.5
 
 针对 **真我 GT8（RMX6699 / 骁龙 8 至尊版 SM8750，平台代号 sun）** 的 SukiSU（KernelSU）温控模块。
 适配 **Android 16 / realme UI 7.0（RMX6699_16.0.0.263 CN01）**，已在实机安装验证。
