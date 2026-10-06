@@ -761,8 +761,8 @@ cp "$MD/mode.conf" "$W/mode.conf"; cp "$MD/spoof.conf" "$W/spoof.conf"
 sec "K. 结构与静态一致性"
 _prop_v=$(grep -m1 '^version=' "$MD/module.prop" | cut -d= -f2)
 _prop_c=$(grep -m1 '^versionCode=' "$MD/module.prop" | cut -d= -f2)
-eq "K01 version=v2.17.0" "$_prop_v" "v2.17.0"
-eq "K02 versionCode=79" "$_prop_c" "79"
+eq "K01 version=v2.17.1" "$_prop_v" "v2.17.1"
+eq "K02 versionCode=80" "$_prop_c" "80"
 eq "K03 module id 未变" "$(grep -m1 '^id=' "$MD/module.prop" | cut -d= -f2)" "realme-gt8-sukisu-thermal-remove"
 _syn=0
 for f in "$MD"/*.sh "$MD"/common/*.sh "$MD"/webroot/cgi-bin/*.sh; do
@@ -877,6 +877,12 @@ eq "U04 3 个 tabpane" "$(grep -c 'class=\"tabpane' "$MD/webroot/index.html")" "
 eq "U05 switchTab 函数" "$(grep -c 'function switchTab' "$MD/webroot/index.html")" "1"
 eq "U06 温感懒加载" "$(grep -c 'THERMAL_LOADED' "$MD/webroot/index.html")" "3"
 eq "U07 CSS 有 tabpane" "$(grep -c 'tabpane' "$MD/webroot/style.css")" "2"
+
+# ══ 25. v2.17.1 首屏白屏优化 ═══════════════════════════════
+sec "V. 首屏优化"
+eq "V01 favicon 内联" "$(grep -c 'rel=\"icon\" href=\"data:,' "$MD/webroot/index.html")" "1"
+eq "V02 源码仍外链 style.css" "$(grep -c 'rel=\"stylesheet\" href=\"style.css\"' "$MD/webroot/index.html")" "1"
+eq "V03 pack.py 有内联逻辑" "$(grep -c '_css = io.open' "$BASE/_analysis/regress/pack.py")" "1"
 
 
 
