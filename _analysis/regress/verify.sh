@@ -773,8 +773,8 @@ cp "$MD/mode.conf" "$W/mode.conf"; cp "$MD/spoof.conf" "$W/spoof.conf"
 sec "K. 结构与静态一致性"
 _prop_v=$(grep -m1 '^version=' "$MD/module.prop" | cut -d= -f2)
 _prop_c=$(grep -m1 '^versionCode=' "$MD/module.prop" | cut -d= -f2)
-eq "K01 version=v2.17.3" "$_prop_v" "v2.17.3"
-eq "K02 versionCode=82" "$_prop_c" "82"
+eq "K01 version=v2.17.4" "$_prop_v" "v2.17.4"
+eq "K02 versionCode=83" "$_prop_c" "83"
 eq "K03 module id 未变" "$(grep -m1 '^id=' "$MD/module.prop" | cut -d= -f2)" "realme-gt8-sukisu-thermal-remove"
 _syn=0
 for f in "$MD"/*.sh "$MD"/common/*.sh "$MD"/webroot/cgi-bin/*.sh; do
@@ -1062,6 +1062,27 @@ cp "$MD/mode.conf" "$W/mode.conf"; cp "$MD/spoof.conf" "$W/spoof.conf"
 
 set -u
 
+
+
+# ══ 28. v2.17.4 U4：文档分层完整性 ═══════════════════════════
+sec "Y. 文档分层"
+eq "Y01 docs 目录三份齐全" "$(ls "$MD"/docs/*.md 2>/dev/null | wc -l | tr -d ' ')" "3"
+eq "Y02 README 有文档导航" "$(grep -c '文档导航' "$MD/README.md")" "1"
+eq "Y03 README 不再含版本演进表" "$(grep -c '^## 版本演进' "$MD/README.md")" "0"
+eq "Y04 版本演进史迁到原理与取舍" "$(grep -c '^## 版本演进' "$MD/docs/原理与取舍.md")" "1"
+eq "Y05 设计取舍迁到原理与取舍" "$(grep -c '^## 设计取舍' "$MD/docs/原理与取舍.md")" "1"
+eq "Y06 配置键迁到配置参考" "$(grep -c '^## 配置' "$MD/docs/配置参考.md")" "1"
+eq "Y07 目录结构迁到配置参考" "$(grep -c '^## 目录结构' "$MD/docs/配置参考.md")" "1"
+eq "Y08 亮度排障迁到排障手册" "$(grep -c '亮度异常排查步骤' "$MD/docs/排障.md")" "1"
+eq "Y09 冲突自检迁到排障手册" "$(grep -c '^## 模块冲突自检' "$MD/docs/排障.md")" "1"
+eq "Y10 自检迁到排障手册" "$(grep -c '^## 自检' "$MD/docs/排障.md")" "1"
+# 内容守恒：关键锚点文字在四份文档里出现且只在目标文档出现
+eq "Y11 风险警告留在 README" "$(grep -c '^## ⚠️ 风险警告' "$MD/README.md")" "1"
+eq "Y12 救砖留在 README" "$(grep -c '^## 救砖' "$MD/README.md")" "1"
+eq "Y13 已知局限留在 README" "$(grep -c '^## 已知局限' "$MD/README.md")" "1"
+# README 不再有大段排障/设计内容（这些标题应从 README 消失）
+eq "Y14 README 无亮度排查标题" "$(grep -c '亮度异常排查步骤' "$MD/README.md")" "0"
+eq "Y15 README 无工作原理标题" "$(grep -c '^## 工作原理' "$MD/README.md")" "0"
 
 # ══ 13. 收尾 ═════════════════════════════════════════════════
 # 假 sysfs 树 / 假模块 / 运行目录全部集中在本 run 目录下（$W），
