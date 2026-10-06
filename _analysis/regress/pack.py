@@ -1,6 +1,6 @@
 import zipfile, os
-# 项目根 = 本脚本所在目录的上一级（跨平台，CI 与本地通用）
-BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# 项目根 = 本脚本所在目录的上一级（_analysis/regress → 项目根，跨平台通用）
+BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.chdir(BASE)
 src = 'GT8-ThermalRemove'
 out = 'GT8-ThermalRemove-v2.13.0.zip'

@@ -270,6 +270,7 @@ conf_get() {
     _f="$1"; _k="$2"; _d="$3"
     _v=$(sed -n "s/^$_k=//p" "$_f" 2>/dev/null | head -n 1)
     if [ -n "$_v" ]; then
+        _v=${_v%%#*}     # v2.13.0：剥行内注释，与 load_conf 保持一致
         _strip "$_v"
         _v="$_sv"
     fi
@@ -352,6 +353,10 @@ load_conf() {
         # 手工编辑配置很容易不写尾换行，这个兜底必须有。
         while IFS= read -r _lc_ln || [ -n "$_lc_ln" ]; do
             case "$_lc_ln" in ''|'#'*) continue ;; esac
+            # v2.13.0：剥行内注释（首个 # 及其后）。此前 mode.conf 大量键带行内
+            # 注释（如 FUSE_ENABLE=1  # 说明），值会被读成「1  # 说明」——
+            # 数值键被净化回落默认、枚举/开关键判定失败（FUSE_ENABLE 因此恒「关闭」）。
+            _lc_ln=${_lc_ln%%#*}
             case "$_lc_ln" in *=*) ;; *) continue ;; esac
             _kk=${_lc_ln%%=*}
             _lc_v=${_lc_ln#*=}
@@ -1615,14 +1620,17 @@ doctor_report() {
     echo "  黑名单   : $_dr_bl 个被排除"
 
     echo "== 4/8 欺骗状态 =="
-    _dr_sc=$(wc -l < "$SPOOF_LIST" 2>/dev/null | tr -d ' ')
+    _dr_sc=0
+    [ -s "$SPOOF_LIST" ] && _dr_sc=$(wc -l < "$SPOOF_LIST" 2>/dev/null | tr -d ' ')
     case "$_dr_sc" in ''|*[!0-9]*) _dr_sc=0 ;; esac
     if [ "$_dr_sc" -gt 0 ]; then
         echo "  记账     : ✓ 已欺骗 $_dr_sc 个温感"
     else
         echo "  记账     : ✗ 空（欺骗未生效，或当前处于保护/安全模式）"
     fi
-    echo "  当前状态 : $(cat "$STATE_FILE" 2>/dev/null || echo unknown)"
+    _dr_state="unknown"
+    [ -s "$STATE_FILE" ] && read -r _dr_state < "$STATE_FILE" 2>/dev/null
+    echo "  当前状态 : $_dr_state"
     echo "  充电中   : $(get_charging 2>/dev/null)"
 
     echo "== 5/8 冲突检测 =="

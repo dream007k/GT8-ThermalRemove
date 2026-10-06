@@ -635,6 +635,7 @@ pydel "$TZ/thermal_zone9"
 sec "O. 一键体检 doctor"
 cp "$MD/mode.conf" "$W/mode.conf"; cp "$MD/spoof.conf" "$W/spoof.conf"
 reload
+eq "O10 load_conf 读含行内注释的 FUSE_ENABLE=1" "$FUSE_ENABLE" "1"
 _dr=$(doctor_report 2>/dev/null)
 eq "O01 8 节标题齐全" "$(printf '%s' "$_dr" | grep -cE '^== [1-8]/8 ')" "8"
 eq "O02 干净环境 0 风险" "$(printf '%s' "$_dr" | grep -c '未发现高风险配置')" "1"
@@ -652,7 +653,7 @@ eq "O06 always+电池欺骗提示风险" "$(printf '%s' "$_dr3" | grep -c '充�
 # 安全模式 → 风险提示
 date '+%Y-%m-%d %H:%M:%S' > "$SAFE_MODE_MARK"
 _dr4=$(doctor_report 2>/dev/null)
-eq "O07 安全模式提示风险" "$(printf '%s' "$_dr4" | grep -c '安全模式')" "1"
+eq "O07 安全模式提示风险" "$(printf '%s' "$_dr4" | grep -c '⚠ 安全模式')" "1"
 : > "$SAFE_MODE_MARK"
 # api --doctor 返回 JSON 且含报告
 _dj=$(api_call --doctor 2>/dev/null)

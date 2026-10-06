@@ -121,6 +121,7 @@ conf_get() {
     _f="$1"; _k="$2"; _d="$3"
     _v=$(sed -n "s/^$_k=//p" "$_f" 2>/dev/null | head -n 1)
     if [ -n "$_v" ]; then
+        _v=${_v%%#*}     # v2.13.0：剥行内注释，与 functions.sh 保持一致
         _strip "$_v"
         _v="$_sv"
     fi
